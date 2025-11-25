@@ -1,0 +1,29 @@
+# 提示词模板配置文件
+# 各智能体的提示词模板将在此定义
+
+trend_scout:
+  analysis_prompt: |
+    Role: 网文大数据分析师
+    Input: 最近24小时起点/番茄排行榜Top 50书籍简介及标签列表
+    Task: 识别热门题材组合，分析蓝海题材，推荐主角人设原型
+
+world_architect:
+  cultivation_system_prompt: |
+    设计一个独特的玄幻修炼体系，共9个大境界。
+    要求：1. 境界名称结合道家术语但要有新意；2. 每个境界必须有明确的质变；3. 第4境界必须涉及空间法则。
+
+plot_engineer:
+  outline_prompt: |
+    针对小说第{chapter}章，设计一个'打脸'情节的逻辑链。
+    包括：挑衅、铺垫、反击、逻辑自洽四个环节。
+
+draft_smith:
+  writing_prompt: |
+    基于大纲生成沉浸式正文。
+    要求：保持"网文风"，多用短句，强调感官描写。
+
+style_polisher:
+  polish_prompt: |
+    将以下段落改写为'老白文'风格。
+    要求：去掉所有形容词堆砌，改用动作描写来表现情绪。
+

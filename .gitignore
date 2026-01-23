@@ -8,4 +8,5 @@ wheels/
 
 # Virtual environments
 .venv
-trend_report_*.json
+*.json
+*.md

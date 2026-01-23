@@ -10,24 +10,21 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
+from agents.trend_scout import TrendScout
+from agents.world_architect import WorldArchitect
 
 def main():
-    """主函数"""
-    print("AutoNovel-X: 全流程自动化AI网文创作系统")
-    print("=" * 50)
-    print("\n可用模块:")
-    print("  - TrendScout: 市场情报与题材自动化")
-    print("  - WorldArchitect: 世界观架构")
-    print("  - PlotEngineer: 情节工程")
-    print("  - DraftSmith: 正文生成")
-    print("  - ContinuityKeeper: 连贯性管理")
-    print("  - StylePolisher: 风格润色")
-    print("\n使用示例:")
-    print("  from agents.trend_scout import TrendScout")
-    print("  scout = TrendScout()")
-    print("  report = scout.scout(platforms=['qidian'])")
-    print("=" * 50)
-
+    print("开始执行趋势侦察...")
+    trend_scout = TrendScout()
+    report = trend_scout.scout(platforms=["qidian"], rank_types=["monthly","recommend","new"], max_books=50, analysis_only=True)
+    #print(report)
+    print("开始执行世界观架构...")
+    human_idea = "主角是一座庙，通过吸收香火来获得力量，苟道+非人器物视角+玄幻。"
+    world_json = {"trend_analysis": report, "human_idea": human_idea}
+    world_architect = WorldArchitect(report, world_json)
+    world_view = world_architect.architect()
+    #print(world_view)
+    world_architect.save_world_view(world_view)
 
 if __name__ == "__main__":
     main()

@@ -1,2 +1,10 @@
-"""风格润色师模块 - 待实现"""
+import sys
+from pathlib import Path
 
+# 添加项目根目录到路径
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from utils.llm_client import gemini_client,load_prompt_config
+import json
+from datetime import datetime

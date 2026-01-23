@@ -16,7 +16,6 @@ sys.path.insert(0, str(project_root))
 
 import time
 import json
-import logging
 from typing import List, Dict, Optional
 from datetime import datetime
 from selenium import webdriver
@@ -25,12 +24,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
-import os
-from utils.llm_client import gemini_pro_client, gemini_flash_client
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+from utils.llm_client import gemini_client,load_prompt_config
 
 class QidianScraper:
     """起点中文网爬虫"""
@@ -57,7 +51,7 @@ class QidianScraper:
             self.driver = webdriver.Chrome(options=self.options)
             return self
         except Exception as e:
-            logger.error(f"Chrome驱动初始化失败: {e}")
+            print(f"Chrome驱动初始化失败: {e}")
             raise
     
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -110,7 +104,7 @@ class QidianScraper:
             tags = list(dict.fromkeys(tags))
             
         except Exception as e:
-            logger.warning(f"从详情页 {book_url} 获取标签失败: {e}")
+            print(f"从详情页 {book_url} 获取标签失败: {e}")
         
         return tags
     
@@ -135,7 +129,7 @@ class QidianScraper:
             }
             url = url_map.get(rank_type, url_map["monthly"])
             
-            logger.info(f"开始爬取起点{rank_type}榜: {url}")
+            print(f"开始爬取起点{rank_type}榜: {url}")
             self.driver.get(url)
             
             # 等待页面加载
@@ -147,13 +141,13 @@ class QidianScraper:
                     EC.presence_of_element_located((By.CLASS_NAME, "book-img-text"))
                 )
             except Exception as e:
-                logger.warning(f"等待页面元素超时: {e}")
+                print(f"等待页面元素超时: {e}")
             
             # 解析页面
             soup = BeautifulSoup(self.driver.page_source, 'html.parser')
             book_list = soup.select('.book-img-text li')
             
-            logger.info(f"找到 {len(book_list)} 本书籍")
+            print(f"找到 {len(book_list)} 本书籍")
             
             for idx, book in enumerate(book_list[:max_books]):
                 try:
@@ -208,141 +202,21 @@ class QidianScraper:
                     books.append(book_data)
                     
                 except Exception as e:
-                    logger.warning(f"解析第{idx+1}本书时出错: {e}")
+                    print(f"解析第{idx+1}本书时出错: {e}")
                     continue
             
-            logger.info(f"成功爬取 {len(books)} 本书籍")
+            print(f"成功爬取 {len(books)} 本书籍")
             return books
             
         except Exception as e:
-            logger.error(f"爬取过程中出错: {e}")
+            print(f"爬取过程中出错: {e}")
             return books
 
 
 class TrendAnalyzer:
     """趋势分析器 - 使用LLM进行语义聚类分析"""
-    
-    def __init__(self, llm_client=None):
-        """
-        初始化分析器
-        
-        Args:
-            llm_client: LLM客户端（如OpenAI、DeepSeek等），如果为None则使用本地分析
-        """
-        self.llm_client = llm_client
-    
-    def analyze_trends(self, books_data: List[Dict], analysis_type: str = "llm") -> Dict:
-        """
-        分析趋势
-        
-        Args:
-            books_data: 书籍数据列表
-            analysis_type: 分析类型 ("llm"使用LLM, "local"本地统计)
-            
-        Returns:
-            趋势分析报告
-        """
-        if analysis_type == "llm" and self.llm_client:
-            return self._llm_analyze(books_data)
-        else:
-            return self._local_analyze(books_data)
-    
-    def _local_analyze(self, books_data: List[Dict]) -> Dict:
-        """
-        本地统计分析（不使用LLM）
-        
-        Args:
-            books_data: 书籍数据列表
-            
-        Returns:
-            趋势分析报告
-        """
-        # 统计标签频率
-        tag_counter = {}
-        platform_counter = {}
-        
-        for book in books_data:
-            platform = book.get("platform", "unknown")
-            platform_counter[platform] = platform_counter.get(platform, 0) + 1
-            
-            tags = book.get("tags", [])
-            for tag in tags:
-                tag_counter[tag] = tag_counter.get(tag, 0) + 1
-        
-        # 找出热门标签
-        top_tags = sorted(tag_counter.items(), key=lambda x: x[1], reverse=True)[:10]
-        
-        # 分析题材组合（简单的共现分析）
-        tag_combinations = {}
-        for book in books_data:
-            tags = book.get("tags", [])
-            if len(tags) >= 2:
-                # 生成标签对
-                for i in range(len(tags)):
-                    for j in range(i+1, len(tags)):
-                        combo = tuple(sorted([tags[i], tags[j]]))
-                        tag_combinations[combo] = tag_combinations.get(combo, 0) + 1
-        
-        top_combinations = sorted(tag_combinations.items(), key=lambda x: x[1], reverse=True)[:5]
-        
-        return {
-            "analysis_time": datetime.now().isoformat(),
-            "total_books": len(books_data),
-            "platform_distribution": platform_counter,
-            "top_tags": [{"tag": tag, "count": count} for tag, count in top_tags],
-            "top_combinations": [{"tags": list(combo), "count": count} for combo, count in top_combinations],
-            "recommendations": self._generate_recommendations(top_tags, top_combinations)
-        }
-    
-    def _llm_analyze(self, books_data: List[Dict]) -> Dict:
-        """
-        使用LLM进行深度分析
-        
-        Args:
-            books_data: 书籍数据列表
-            
-        Returns:
-            LLM生成的分析报告
-        """
-        # 构建提示词
-        prompt = self._build_analysis_prompt(books_data)
-        
-        try:
-            # 调用LLM（这里需要根据实际的LLM客户端调整）
-            if hasattr(self.llm_client, 'invoke'):
-                response = self.llm_client.invoke(prompt)
-                print(response)
-                result = response.content if hasattr(response, 'content') else str(response)
-            else:
-                # 降级到本地分析
-                logger.warning("LLM客户端不可用，降级到本地分析")
-                return self._local_analyze(books_data)
-            
-            # 尝试解析JSON
-            try:
-                return json.loads(result)
-            except json.JSONDecodeError:
-                # 如果不是JSON，包装结果
-                return {
-                    "analysis_time": datetime.now().isoformat(),
-                    "llm_analysis": result,
-                    "raw_data": books_data[:10]  # 只保留前10条原始数据
-                }
-        except Exception as e:
-            logger.error(f"LLM分析失败: {e}，降级到本地分析")
-            return self._local_analyze(books_data)
-    
-    def _build_analysis_prompt(self, books_data: List[Dict]) -> str:
-        """
-        构建分析提示词
-        
-        Args:
-            books_data: 书籍数据列表
-            
-        Returns:
-            提示词字符串
-        """
-        # 准备数据摘要
+
+    def analyze_trends(self, books_data: List[Dict]) -> Dict:
         books_summary = []
         for book in books_data[:50]:  # 限制前50本
             books_summary.append({
@@ -351,80 +225,16 @@ class TrendAnalyzer:
                 "intro": book.get("intro", "")[:200]  # 限制简介长度
             })
         
-        prompt = f"""Role: 网文大数据分析师
-
-Input: 最近24小时起点排行榜Top 50书籍简介及标签列表（JSON格式）。
-
-数据：
-{json.dumps(books_summary, ensure_ascii=False, indent=2)}
-
-Task:
-1. 识别当前最热门的3个"题材组合"（如：重生+神豪+直播）。
-2. 分析"蓝海"题材：即需求量大（搜索多）但供给少（上榜书少）的领域。
-3. 为每个热门题材组合推荐主角人设原型。
-
-Output: 生成一份JSON报告，包含以下字段：
-{{
-  "top_3_genres": [
-    {{
-      "name": "题材名称",
-      "core_hook": "核心爽点",
-      "protagonist_archetype": "主角人设原型",
-      "market_demand": "市场需求评估"
-    }}
-  ],
-  "blue_ocean_genres": [
-    {{
-      "name": "蓝海题材名称",
-      "reason": "为什么是蓝海",
-      "opportunity": "机会点"
-    }}
-  ],
-  "trend_insights": "整体趋势洞察"
-}}
-
-请严格按照JSON格式输出，不要包含其他文字。不要包括前后的json标识符。"""
+        system_prompt = load_prompt_config("trend_scout_prompt", "system")
+        user_prompt = load_prompt_config("trend_scout_prompt", "user", book_data=json.dumps(books_summary, ensure_ascii=False, indent=2))
+        schema = load_prompt_config("trend_scout_prompt", "json_schema")
+        response = gemini_client(system_prompt, user_prompt, schema)
+        return response       
         
-        return prompt
-    
-    def _generate_recommendations(self, top_tags: List, top_combinations: List) -> List[Dict]:
-        """
-        生成推荐建议
-        
-        Args:
-            top_tags: 热门标签列表
-            top_combinations: 热门组合列表
-            
-        Returns:
-            推荐列表
-        """
-        recommendations = []
-        
-        # 基于热门标签生成推荐
-        if top_tags:
-            top_tag = top_tags[0][0]
-            recommendations.append({
-                "type": "热门标签",
-                "suggestion": f"当前最热门标签是'{top_tag}'，建议结合此标签创作",
-                "confidence": "高"
-            })
-        
-        # 基于组合生成推荐
-        if top_combinations:
-            combo = top_combinations[0]
-            recommendations.append({
-                "type": "题材组合",
-                "suggestion": f"热门组合：{' + '.join(combo[0])}，可考虑采用此组合",
-                "confidence": "中"
-            })
-        
-        return recommendations
-
-
 class TrendScout:
     """趋势侦察兵主类 - 整合爬虫和分析器"""
     
-    def __init__(self, llm_client=None, headless: bool = True):
+    def __init__(self, headless: bool = True):
         """
         初始化TrendScout
         
@@ -432,12 +242,11 @@ class TrendScout:
             llm_client: LLM客户端（可选）
             headless: 是否使用无头浏览器
         """
-        self.llm_client = llm_client
         self.headless = headless
-        self.analyzer = TrendAnalyzer(llm_client)
+        self.analyzer = TrendAnalyzer()
     
     def scout(self, platforms: List[str] = ["qidian"], rank_types: List[str] = None, 
-              max_books: int = 50, use_llm: bool = False) -> Dict:
+              max_books: int = 50,analysis_only: bool = False) -> Dict:
         """
         执行侦察任务
         
@@ -458,7 +267,7 @@ class TrendScout:
         
         # 爬取起点
         if "qidian" in platforms:
-            logger.info("开始爬取起点中文网...")
+            print("开始爬取起点中文网...")
             try:
                 with QidianScraper(headless=self.headless) as scraper:
                     for rank_type in rank_types:
@@ -466,14 +275,12 @@ class TrendScout:
                         all_books.extend(books)
                         time.sleep(2)  # 避免请求过快
             except Exception as e:
-                logger.error(f"爬取起点失败: {e}")
+                print(f"爬取起点失败: {e}")
         
         # 分析趋势
-        logger.info(f"开始分析 {len(all_books)} 本书籍的趋势...")
+        print(f"开始分析 {len(all_books)} 本书籍的趋势...")
         analysis = self.analyzer.analyze_trends(
-            all_books, 
-            analysis_type="llm" if use_llm and self.llm_client else "local"
-        )
+            all_books)
         
         # 生成完整报告
         report = {
@@ -483,7 +290,8 @@ class TrendScout:
             "raw_data": all_books,
             "trend_analysis": analysis
         }
-        
+        if analysis_only:
+            return analysis
         return report
     
     def save_report(self, report: Dict, filepath: str = None) -> str:
@@ -504,34 +312,21 @@ class TrendScout:
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
         
-        logger.info(f"报告已保存到: {filepath}")
+        print(f"报告已保存到: {filepath}")
         return filepath
 
 
 # 使用示例
 if __name__ == "__main__":
     # 示例：不使用LLM的本地分析
-    scout = TrendScout(llm_client=gemini_flash_client, headless=True)
+    scout = TrendScout()
     report = scout.scout(
         platforms=["qidian"],
         rank_types=["monthly","recommend","new"],
         max_books=20,
-        use_llm=True
+        analysis_only=True
     )
-    
+    print(report)
     # 保存报告
     scout.save_report(report)
     
-    # 打印摘要
-    print("\n=== 趋势分析摘要 ===")
-    print(f"爬取书籍总数: {report['total_books_scraped']}")
-    if "trend_analysis" in report:
-        analysis = report["trend_analysis"]
-        print(f"\n热门标签Top 5:")
-        for tag_info in analysis.get("top_tags", [])[:5]:
-            print(f"  - {tag_info['tag']}: {tag_info['count']}次")
-        
-        print(f"\n热门组合Top 3:")
-        for combo_info in analysis.get("top_combinations", [])[:3]:
-            print(f"  - {' + '.join(combo_info['tags'])}: {combo_info['count']}次")
-

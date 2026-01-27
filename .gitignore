@@ -10,3 +10,7 @@ wheels/
 .venv
 *.json
 *.md
+
+# Local environment secrets
+.env
+.env.*

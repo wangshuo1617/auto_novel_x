@@ -1,1 +1,5 @@
-"""工具模块，用于存储各种工具"""
+"""工具模块"""
+
+from .database import Database
+
+__all__ = ["Database"]

@@ -18,19 +18,16 @@ class PlotEngineer:
     def run(self) -> dict:
         system_prompt = load_prompt_config("plot_engineer_prompt", "system")
         
+        # 将字典转换为JSON字符串，以便提示词模板正确格式化
         prepare_data = {
-            "world_setting": self.world_setting,
-            "db_state": self.db_state,
-            "story_history": self.story_history
+            "world_setting": json.dumps(self.world_setting, ensure_ascii=False, indent=2) if isinstance(self.world_setting, dict) else str(self.world_setting),
+            "db_state": json.dumps(self.db_state, ensure_ascii=False, indent=2) if isinstance(self.db_state, dict) else str(self.db_state),
+            "story_history": json.dumps(self.story_history, ensure_ascii=False, indent=2) if isinstance(self.story_history, dict) else str(self.story_history)
         }
         user_prompt = load_prompt_config("plot_engineer_prompt", "user", **prepare_data)
         schema = load_prompt_config("plot_engineer_prompt", "json_schema")
         response = gemini_client(system_prompt, user_prompt, schema)
         return response
-
-    # 兼容旧调用：不再直接运行 gemini_client
-    def engineer(self) -> dict:
-        return self.run()
     
     def save_plot_data(self, plot_data: dict, filepath: str = None) -> str:
         if filepath is None:
@@ -39,8 +36,8 @@ class PlotEngineer:
             json.dump(plot_data, f, ensure_ascii=False, indent=2)
 
 if __name__ == "__main__":
-    with open("world_view_20260123_154339.md", "r", encoding="utf-8") as f:
-        world_setting = f.read()
+    with open("world_setting.json", "r", encoding="utf-8") as f:
+        world_setting = json.load(f)["novel_setting"]
     with open("element_data_20260123_164221.json", "r", encoding="utf-8") as f:
         db_state = json.load(f)
     story_history = ""

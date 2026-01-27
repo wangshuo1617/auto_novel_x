@@ -34,10 +34,6 @@ class LoreArchivist:
         response = gemini_client(self.system_prompt, self.user_prompt, self.schema)
         return response
 
-    # 兼容旧调用：不再直接运行 gemini_client
-    def engineer(self) -> dict:
-        return self.run()
-
     def save_lore_record(self, output_data: dict, filepath: str = None) -> str:
         if filepath is None:
             filepath = f"lore_record_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"

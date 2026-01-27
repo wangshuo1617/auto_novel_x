@@ -30,14 +30,6 @@ class ElementDesigner:
 
         response = gemini_client(system_prompt, user_prompt, schema)
         return response
-        
-    def inital_design(self) -> dict:
-        # 兼容旧调用：不再直接运行 gemini_client
-        return self.run(mode="inital")
-    
-    def addon_design(self, request_payload: dict) -> dict:
-        # 兼容旧调用：不再直接运行 gemini_client
-        return self.run(mode="addon", request_payload=request_payload)
     
     def save_element_data(self, element_data: dict, filepath: str = None) -> str:
         if filepath is None:
@@ -46,8 +38,8 @@ class ElementDesigner:
             json.dump(element_data, f, ensure_ascii=False, indent=2)
 
 if __name__ == "__main__":
-    with open("world_view_20260123_154339.md", "r", encoding="utf-8") as f:
-        world_setting = f.read()
+    with open("world_setting.json", "r", encoding="utf-8") as f:
+        world_setting = json.load(f)["novel_setting"]
     element_designer = ElementDesigner(world_setting)
     element_data = element_designer.run(mode="inital")
     print(element_data)

@@ -19,10 +19,6 @@ class StylePolisher:
     def run(self) -> dict:
         response = gemini_client(self.system_prompt, self.user_prompt, self.schema)
         return response
-
-    # 兼容旧调用：不再直接运行 gemini_client
-    def polish(self) -> dict:
-        return self.run()
     
     def save_style_data(self, style_data: dict, filepath: str = None) -> str:
         if filepath is None:

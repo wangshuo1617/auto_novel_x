@@ -231,10 +231,6 @@ class TrendAnalyzer:
         response = gemini_client(system_prompt, user_prompt, schema)
         return response       
 
-    # 兼容旧调用：不再直接运行 gemini_client
-    def analyze_trends(self, books_data: List[Dict]) -> Dict:
-        return self.run(books_data)
-        
 class TrendScout:
     """趋势侦察兵主类 - 整合爬虫和分析器"""
     
@@ -249,7 +245,7 @@ class TrendScout:
         self.headless = headless
         self.analyzer = TrendAnalyzer()
     
-    def scout(self, platforms: List[str] = ["qidian"], rank_types: List[str] = None, 
+    def run(self, platforms: List[str] = ["qidian"], rank_types: List[str] = None, 
               max_books: int = 50,analysis_only: bool = False) -> Dict:
         """
         执行侦察任务
@@ -323,7 +319,7 @@ class TrendScout:
 if __name__ == "__main__":
     # 示例：不使用LLM的本地分析
     scout = TrendScout()
-    report = scout.scout(
+    report = scout.run(
         platforms=["qidian"],
         rank_types=["monthly","recommend","new"],
         max_books=20,

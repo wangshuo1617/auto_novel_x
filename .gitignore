@@ -13,4 +13,4 @@ wheels/
 
 # Local environment secrets
 .env
-.env.*
+output/

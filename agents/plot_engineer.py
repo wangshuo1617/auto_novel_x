@@ -15,7 +15,7 @@ class PlotEngineer:
         self.db_state = db_state
         self.story_history = story_history
         
-    def engineer(self) -> dict:
+    def run(self) -> dict:
         system_prompt = load_prompt_config("plot_engineer_prompt", "system")
         
         prepare_data = {
@@ -27,6 +27,10 @@ class PlotEngineer:
         schema = load_prompt_config("plot_engineer_prompt", "json_schema")
         response = gemini_client(system_prompt, user_prompt, schema)
         return response
+
+    # 兼容旧调用：不再直接运行 gemini_client
+    def engineer(self) -> dict:
+        return self.run()
     
     def save_plot_data(self, plot_data: dict, filepath: str = None) -> str:
         if filepath is None:
@@ -41,6 +45,6 @@ if __name__ == "__main__":
         db_state = json.load(f)
     story_history = ""
     plot_engineer = PlotEngineer(world_setting, db_state, story_history)
-    plot_data = plot_engineer.engineer()
+    plot_data = plot_engineer.run()
     print(plot_data)
     plot_engineer.save_plot_data(plot_data)

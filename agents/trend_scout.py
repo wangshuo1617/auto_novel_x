@@ -216,7 +216,7 @@ class QidianScraper:
 class TrendAnalyzer:
     """趋势分析器 - 使用LLM进行语义聚类分析"""
 
-    def analyze_trends(self, books_data: List[Dict]) -> Dict:
+    def run(self, books_data: List[Dict]) -> Dict:
         books_summary = []
         for book in books_data[:50]:  # 限制前50本
             books_summary.append({
@@ -230,6 +230,10 @@ class TrendAnalyzer:
         schema = load_prompt_config("trend_scout_prompt", "json_schema")
         response = gemini_client(system_prompt, user_prompt, schema)
         return response       
+
+    # 兼容旧调用：不再直接运行 gemini_client
+    def analyze_trends(self, books_data: List[Dict]) -> Dict:
+        return self.run(books_data)
         
 class TrendScout:
     """趋势侦察兵主类 - 整合爬虫和分析器"""
@@ -279,8 +283,7 @@ class TrendScout:
         
         # 分析趋势
         print(f"开始分析 {len(all_books)} 本书籍的趋势...")
-        analysis = self.analyzer.analyze_trends(
-            all_books)
+        analysis = self.analyzer.run(all_books)
         
         # 生成完整报告
         report = {

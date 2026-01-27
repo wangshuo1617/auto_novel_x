@@ -22,7 +22,7 @@ def main():
     human_idea = "主角是一座庙，通过吸收香火来获得力量，苟道+非人器物视角+玄幻。"
     world_json = {"trend_analysis": report, "human_idea": human_idea}
     world_architect = WorldArchitect(report, world_json)
-    world_view = world_architect.architect()
+    world_view = world_architect.run()
     #print(world_view)
     world_architect.save_world_view(world_view)
 

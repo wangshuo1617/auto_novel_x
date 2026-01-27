@@ -14,13 +14,17 @@ class WorldArchitect:
         self.trend_analysis = trend_analysis
         self.human_idea = human_idea
         
-    def architect(self) -> dict:
+    def run(self) -> dict:
         system_prompt = load_prompt_config("world_architect_prompt", "system")
         world_json = {"trend_analysis": self.trend_analysis, "human_idea": self.human_idea}
         user_prompt = load_prompt_config("world_architect_prompt", "user", **world_json)
         schema = load_prompt_config("world_architect_prompt", "json_schema")
         response = gemini_client(system_prompt, user_prompt, schema)
         return response
+
+    # 兼容旧调用：不再直接运行 gemini_client
+    def architect(self) -> dict:
+        return self.run()
     
     def save_world_view(self, world_view: dict, filepath: str = None) -> str:
         if filepath is None:
@@ -32,6 +36,6 @@ if __name__ == "__main__":
     trend_analysis = json.load(open("trend_report_20260123_145749.json", "r", encoding="utf-8"))
     human_idea = "主角是一座庙，通过吸收香火来获得力量，苟道+非人器物视角+玄幻。"
     architect = WorldArchitect(trend_analysis, human_idea)
-    world_view = architect.architect()
+    world_view = architect.run()
     print(world_view)
     architect.save_world_view(world_view)

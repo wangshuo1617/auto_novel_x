@@ -17,7 +17,7 @@ system_prompt = """
 3.  **悬念执行**：严格执行大纲中要求的 `cliffhanger`，在断章时戛然而止，把期待感拉满。
 
 # Goal
-读取具体的 `chapter_outline` (单章大纲) 和相关的 `character_data`，创作出一章约 2000-3000 字的正文。
+读取具体的 `chapter_outline` (单章大纲) 和相关的 `character_data`，创作出一章约 3000-4000 字的正文。
 """
 
 user_prompt = """
@@ -27,20 +27,29 @@ user_prompt = """
 * **当前场景**：{location_id}
 * **当前小说世界数据**：{db_state}
 
-## 2. 登场角色 (JSON)
+## 2. 当前分卷剧情总览 (Part Info)
+{plot_analysis}
+
+## 3. 当前剧情简述 (History)
+{story_history}
+
+## 4. 上一章结尾 (Cliffhanger)
+{cliffhanger}
+
+## 5. 本章大纲 (JSON)
+{plot_points}
+*(来自情景工程师的 plot_arc 中的某一章)*
+
+## 6. 登场角色 (JSON)
 {participating_characters}
 *(提取本章出场角色的详细数据，包含口头禅、外貌、等级)*
 使用道具：{key_items_used}
 
-## 3. 本章大纲 (JSON)
-{plot_points}
-*(来自情景工程师的 plot_arc 中的某一章)*
-
 # Instruction
-请根据大纲，创作第 {chapter_num} 章的正文，让读者产生{expected_reader_reaction}的情绪。
+请根据大纲，创作第 {chapter_num} 章的正文，让读者产生【{expected_reader_reaction}】的情绪。
 
-## Step 1: 场景构建 (Scene Setup)
-开篇先用 100 字描写当前环境，渲染出大纲要求的 {emotional_tone}（情绪基调）。
+## Step 1: 场景构建 (Scene Setup)(根据需要决定是否需要这一部分)
+开篇先用 100 字描写当前环境，渲染出大纲要求的【 {emotional_tone}】（情绪基调）。
 * *比如基调是“压抑”，就写乌云、冷风、压迫感。*
 
 ## Step 2: 剧情扩写 (Expansion)
@@ -50,22 +59,35 @@ user_prompt = """
 * **心理活动**：主角在面临选择或危机时，必须有一段内心独白（心理博弈），展现他的聪明或决断。
 
 ## Step 3: 结尾收束 (The Hook)
-使用大纲中的{cliffhanger}内容作为本章的最后一段。
+使用大纲中的【{cliffhanger}】内容作为本章的最后一段。
 * *要求*：写完悬念直接结束，不要加任何结束语。
 
 # Output Format
 直接输出正文内容，不要包含“好的，我来写”等废话。
 格式要求：
-* **标题**：{title}
-* **正文**：Markdown 格式，段落之间空一行。
+```json
+{{
+  "chapter_num": "Integer",
+  "title": "String",
+  "draft_content": "String (Markdown 格式，段落之间空一行)"
+}}
+```
 """
 
 json_schema = {
   "type": "object",
   "properties": {
-    "element_data": {
+    "chapter_num": {
+      "type": "integer",
+      "description": "章节编号"
+    },
+    "title": {
       "type": "string",
-      "description": "输出的Markdown数据"
+      "description": "章节标题"
+    },
+    "draft_content": {
+      "type": "string",
+      "description": "正文内容的Markdown数据"
     }
   }
 }

@@ -12,20 +12,32 @@ from datetime import datetime
 class ElementDesigner:
     def __init__(self, world_setting: dict):
         self.world_setting = world_setting
+
+    def run(self, mode: str = "inital", request_payload: dict = None) -> dict:
+        system_prompt = load_prompt_config("element_designer_prompt", "system")
+        schema = load_prompt_config("element_designer_prompt", "json_schema")
+
+        if mode == "inital":
+            user_prompt = load_prompt_config(
+                "element_designer_prompt",
+                "inital",
+                world_setting=json.dumps(self.world_setting, ensure_ascii=False, indent=2),
+            )
+        elif mode == "addon":
+            user_prompt = load_prompt_config("element_designer_prompt", "addon", request_payload)
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
+
+        response = gemini_client(system_prompt, user_prompt, schema)
+        return response
         
     def inital_design(self) -> dict:
-        system_prompt = load_prompt_config("element_designer_prompt", "system")
-        user_prompt = load_prompt_config("element_designer_prompt", "inital", world_setting = json.dumps(self.world_setting, ensure_ascii=False, indent=2))
-        schema = load_prompt_config("element_designer_prompt", "json_schema")
-        response = gemini_client(system_prompt, user_prompt, schema)
-        return response
+        # 兼容旧调用：不再直接运行 gemini_client
+        return self.run(mode="inital")
     
     def addon_design(self, request_payload: dict) -> dict:
-        system_prompt = load_prompt_config("element_designer_prompt", "system")
-        user_prompt = load_prompt_config("element_designer_prompt", "addon", request_payload)
-        schema = load_prompt_config("element_designer_prompt", "json_schema")
-        response = gemini_client(system_prompt, user_prompt, schema)
-        return response
+        # 兼容旧调用：不再直接运行 gemini_client
+        return self.run(mode="addon", request_payload=request_payload)
     
     def save_element_data(self, element_data: dict, filepath: str = None) -> str:
         if filepath is None:
@@ -37,6 +49,6 @@ if __name__ == "__main__":
     with open("world_view_20260123_154339.md", "r", encoding="utf-8") as f:
         world_setting = f.read()
     element_designer = ElementDesigner(world_setting)
-    element_data = element_designer.inital_design()
+    element_data = element_designer.run(mode="inital")
     print(element_data)
     element_designer.save_element_data(element_data)

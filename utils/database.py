@@ -523,6 +523,69 @@ class Database:
         if self.conn:
             self.conn.close()
 
+    def clear_all(self, drop_file: bool = False) -> Dict[str, Any]:
+        """
+        清空数据库中的所有信息。
+
+        Args:
+            drop_file: 如果为 True，则会关闭连接、删除数据库文件并重新创建空数据库；
+                       否则仅删除所有表中的数据并执行 VACUUM。
+
+        Returns:
+            一个字典，包含被清空的表名以及操作结果。
+        """
+        results: Dict[str, Any] = {}
+
+        # 如果用户希望删除文件，则需要先关闭连接
+        if drop_file:
+            try:
+                self.close()
+            except Exception:
+                pass
+
+            try:
+                if self.db_path.exists():
+                    self.db_path.unlink()
+                # 重新创建空数据库文件并初始化表
+                self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+                self.conn.row_factory = sqlite3.Row
+                self._init_tables()
+                results["dropped_file"] = True
+            except Exception as e:
+                results["dropped_file"] = False
+                results["error"] = str(e)
+
+            return results
+
+        # 否则仅删除各表中的数据
+        cursor = self.conn.cursor()
+        tables = [
+            "character_inventory",
+            "character_relations",
+            "character_status",
+            "item_placement",
+            "items",
+            "locations",
+            "characters",
+        ]
+
+        for t in tables:
+            try:
+                cursor.execute(f"DELETE FROM {t}")
+                results[t] = "cleared"
+            except Exception as e:
+                results[t] = f"error: {e}"
+
+        try:
+            self.conn.commit()
+            # 回收空间
+            cursor.execute("VACUUM")
+            results["vacuum"] = "ok"
+        except Exception as e:
+            results["vacuum"] = f"error: {e}"
+
+        return results
+
     def __enter__(self):
         """上下文管理器入口"""
         return self
@@ -530,3 +593,46 @@ class Database:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """上下文管理器出口"""
         self.close()
+
+
+# 模块级缓存：为每本书维护一个 Database 实例，避免不同模块无意间使用同一个文件或创建多个连接
+_DB_INSTANCES = {}
+
+
+def get_database_for_book(book_dir: str | Path) -> Database:
+    """
+    返回指定书籍目录对应的 Database 实例（单例/缓存）。
+
+    Args:
+        book_dir: 书籍目录路径或字符串
+
+    Returns:
+        Database 实例（对应 book_dir/database.db）
+    """
+    book_path = Path(book_dir)
+    db_path = str((book_path / "database.db").resolve())
+    inst = _DB_INSTANCES.get(db_path)
+    if inst:
+        return inst
+
+    inst = Database(db_path)
+    _DB_INSTANCES[db_path] = inst
+    return inst
+
+
+def close_database_for_book(book_dir: str | Path) -> bool:
+    """
+    关闭并移除缓存中指定书籍的 Database 实例（如果存在）。
+
+    Returns True if an instance was closed/removed.
+    """
+    book_path = Path(book_dir)
+    db_path = str((book_path / "database.db").resolve())
+    inst = _DB_INSTANCES.pop(db_path, None)
+    if inst:
+        try:
+            inst.close()
+        except Exception:
+            pass
+        return True
+    return False

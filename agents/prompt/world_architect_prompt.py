@@ -56,62 +56,62 @@ user_prompt = """
 2. **novel_setting**（小说设定）：这部分会持续流转给后续的所有创作环节
 
 JSON 结构如下：
-{
-  "business_analysis": {
+{{
+  "business_analysis": {{
     "selected_genre": "选定赛道，例如：重生+轻松+家族修仙",
     "decision_reasoning": "决策理由，引用趋势数据，解释为何这个组合能火",
     "book_title": "拟定书名，例如：《万物词条面板》",
     "logline": "一句话简介，20字以内的核心梗概"
-  },
-  "novel_setting": {
-    "golden_finger": {
+  }},
+  "novel_setting": {{
+    "golden_finger": {{
       "name": "金手指名称，例如：万物词条面板",
       "mechanism": "功能机制，详细说明如何运作，代价是什么，收益是什么",
       "pleasure_point_preview": "爽点预演，列举一个具体的场景，展示金手指如何带来爽感"
-    },
-    "world_background": {
+    }},
+    "world_background": {{
       "description": "世界背景，宏观描述地理、历史、当前局势",
       "core_resource": "核心资源，例如：灵石、算力、信徒",
       "power_system": [
-        {
+        {{
           "level": "等级1名称",
           "description": "能力描述及表现力",
           "promotion_condition": "晋升条件"
-        },
-        {
+        }},
+        {{
           "level": "等级2名称",
           "description": "能力描述及表现力",
           "promotion_condition": "晋升条件"
-        }
+        }}
         // ... 继续列出所有等级，由低到高
       ]
-    },
-    "factions_and_conflicts": {
+    }},
+    "factions_and_conflicts": {{
       "factions": [
-        {
+        {{
           "name": "主要势力A名称",
           "type": "正派/反派/中立",
           "ideology": "理念",
           "attitude_towards_protagonist": "对主角的态度"
-        },
-        {
+        }},
+        {{
           "name": "主要势力B名称",
           "type": "正派/反派/中立",
           "ideology": "理念",
           "attitude_towards_protagonist": "对主角的态度"
-        }
+        }}
         // ... 列出2-3个主要势力
       ],
       "world_crisis": "世界级危机，随着主角成长逐渐揭露的阴谋或灾难",
       "protagonist_role": "主角在世界危机中扮演的角色"
-    },
-    "reader_expectation": {
+    }},
+    "reader_expectation": {{
       "early_stage_highlights": "前期看点，前50章主要看什么",
       "mid_stage_highlights": "中期看点，主角地图换到哪里",
       "emotional_tone": "情绪基调，例如：轻松/热血/黑暗/智斗"
-    }
-  }
-}
+    }}
+  }}
+}}
 """
 
 json_schema = {

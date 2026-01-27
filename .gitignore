@@ -14,3 +14,4 @@ wheels/
 # Local environment secrets
 .env
 output/
+logs/

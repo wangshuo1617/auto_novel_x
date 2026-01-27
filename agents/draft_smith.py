@@ -37,6 +37,7 @@ class DraftSmith:
                 prepare_data[key] = json.dumps(value, ensure_ascii=False, indent=2)
             else:
                 prepare_data[key] = value
+        print("DraftSmith prepare_data:",prepare_data["plot_points"])
         self.user_prompt = load_prompt_config("draft_smith_prompt", "user", **prepare_data)
         self.schema = load_prompt_config("draft_smith_prompt", "json_schema")
         

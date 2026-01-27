@@ -30,7 +30,7 @@ from agents import (
     LoreArchivist,
     TrendScout,
 )
-from utils.database import Database
+from utils.database import Database, get_database_for_book
 
 
 class MainLoop:
@@ -72,7 +72,7 @@ class MainLoop:
             print(f"检测到已存在的书籍文件夹: {self.book_dir}")
         else:
             # 创建新书籍目录
-            book_id = f"book_{datetime.now().strftime('%Y%m%d')}"
+            book_id = f"book_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             self.book_dir = self.output_dir / book_id
             self.book_dir.mkdir(parents=True, exist_ok=True)
             self.is_existing_book = False
@@ -83,8 +83,8 @@ class MainLoop:
         self.main_story_goal = main_story_goal
         
         # 数据库
-        db_path = self.book_dir / "database.db"
-        self.db = Database(str(db_path))
+        # 使用每本书独立的数据库实例（缓存）
+        self.db = get_database_for_book(self.book_dir)
         
         # 状态变量
         self.world_setting: Optional[Dict] = None  # 完整的JSON结构，包含business_analysis和novel_setting
@@ -94,6 +94,10 @@ class MainLoop:
         self.story_history: List[str] = []
         self.previous_volume_summary = ""
         self.cliffhanger = ""
+        # 当前使用的剧情弧（由 PlotEngineer 生成），以及在该弧中的索引
+        # plot_arc 是一个由多个章节大纲组成的列表；plot_arc_index 指向下一章应使用的条目
+        self.plot_arc: List[Dict] = []
+        self.plot_arc_index: int = 0
         
         # 历史档案馆数据
         self.lore_records: List[Dict] = []
@@ -146,7 +150,92 @@ class MainLoop:
             self.current_chapter_num = 1
             print("✓ 未找到已有章节，将从第 1 章开始")
         
-        # 3. 查找所有分卷计划文件，确定当前卷编号
+        # 3. 加载历史记录，构建故事历史（优先加载以便用于卷规划）
+        lore_files = sorted(self.book_dir.glob("lore_record_ch*.json"))
+        for lore_file in lore_files:
+            try:
+                with open(lore_file, "r", encoding="utf-8") as f:
+                    lore_data_str = f.read()
+                    lore_result = {"output_data": lore_data_str}
+                    self.lore_records.append(lore_result)
+                    
+                    # 提取摘要添加到故事历史
+                    try:
+                        lore_data = json.loads(lore_data_str)
+                        summary = lore_data.get("summary_text", "")
+                        if summary:
+                            self.story_history.append(summary)
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"⚠ 加载历史记录文件失败 {lore_file}: {e}")
+                pass
+
+        if self.story_history:
+            print(f"✓ 已加载 {len(self.story_history)} 条历史记录")
+            # 生成上一卷摘要（用于新卷规划）
+            self.previous_volume_summary = "\n".join(self.story_history[-10:])
+        
+        # 额外：如果存在以前保存的 plot_data.json，尝试读取并恢复 plot_arc（以便继续使用情景工程师的产出）
+        plot_file = self.book_dir / "plot_data.json"
+        if plot_file.exists():
+            try:
+                # 读取为标准 JSON object
+                with open(plot_file, "r", encoding="utf-8") as f:
+                    plot_data = json.load(f)
+
+                if isinstance(plot_data, dict):
+                    self.plot_arc = plot_data.get("plot_arc", []) or []
+                    # 根据当前章节号跳过已经写过的 arc 条目
+                    idx = 0
+                    for entry in self.plot_arc:
+                        try:
+                            ent_num = entry.get("chapter_num")
+                            if isinstance(ent_num, int) and ent_num < self.current_chapter_num:
+                                idx += 1
+                        except Exception:
+                            continue
+                    self.plot_arc_index = idx
+                    print(f"✓ 已恢复 plot_arc（{len(self.plot_arc)} 条），下一条索引: {self.plot_arc_index}")
+            except Exception as e:
+                print(f"⚠ 无法读取/解析 plot_data.json: {e}")
+        else:
+            # 如果没有找到 plot_data.json，尝试使用剧情工程师生成（以便继续写作）
+            print("✓ 未找到 plot_data.json，尝试使用剧情工程师生成 plot_arc...")
+            try:
+                plot_engineer = PlotEngineer(
+                    world_setting=self.get_novel_setting(),
+                    db_state=self.db.get_state(),
+                    story_history="\n".join(self.story_history) if self.story_history else "",
+                )
+                plot_result = plot_engineer.run()
+
+                # PlotEngineer 可能返回在 element_data 或 output_data 中，兼容两种情况
+                plot_data_str = plot_result.get("element_data") or plot_result.get("output_data") or "{}"
+                try:
+                    plot_data = json.loads(plot_data_str) if isinstance(plot_data_str, str) else (plot_data_str or {})
+                except Exception:
+                    plot_data = {}
+
+                self.plot_arc = plot_data.get("plot_arc", []) or []
+                self.plot_arc_index = 0
+
+                if self.plot_arc:
+                    # 保存到磁盘，供后续继续使用
+                    try:
+                        with open(plot_file, "w", encoding="utf-8") as f:
+                            json.dump(plot_data, f, ensure_ascii=False, indent=2)
+                        print(f"✓ 已生成并保存 plot_data.json（{len(self.plot_arc)} 条）: {plot_file}")
+                    except Exception:
+                        print("⚠ 已生成 plot_arc，但无法保存 plot_data.json 到磁盘")
+                else:
+                    print("⚠ 剧情工程师未返回有效的 plot_arc，继续但 plot_arc 为空")
+            except Exception as e:
+                print(f"⚠ 运行剧情工程师失败: {e}")
+                self.plot_arc = []
+                self.plot_arc_index = 0
+
+        # 4. 查找所有分卷计划文件，确定当前卷编号；若没有分卷计划则尝试生成默认分卷规划
         volume_files = sorted(self.book_dir.glob("volume_*_plan.json"))
         if volume_files:
             max_volume_num = 0
@@ -169,29 +258,33 @@ class MainLoop:
                     self.volume_plan = json.load(f)
                 print(f"✓ 已加载当前卷计划: {volume_file}")
         else:
+            # 未找到分卷计划，尝试使用 ArcDirector 生成默认分卷计划
             self.current_volume_num = 1
-            print("✓ 未找到已有分卷计划，将从第 1 卷开始")
-        
-        # 4. 加载历史记录，构建故事历史
-        lore_files = sorted(self.book_dir.glob("lore_record_ch*.json"))
-        for lore_file in lore_files:
+            print("✓ 未找到已有分卷计划，尝试生成默认分卷计划...")
             try:
-                with open(lore_file, "r", encoding="utf-8") as f:
-                    lore_data_str = f.read()
-                    lore_result = {"output_data": lore_data_str}
-                    self.lore_records.append(lore_result)
-                    
-                    # 提取摘要添加到故事历史
-                    try:
-                        lore_data = json.loads(lore_data_str)
-                        summary = lore_data.get("summary_text", "")
-                        if summary:
-                            self.story_history.append(summary)
-                    except Exception:
-                        pass
+                arc_director = ArcDirector(
+                    world_setting=self.get_novel_setting(),
+                    db_state=self.db.get_state(),
+                    main_story_goal=self.main_story_goal,
+                    previous_volume_summary=self.previous_volume_summary,
+                    volume_num=self.current_volume_num,
+                )
+                volume_result = arc_director.run()
+                volume_plan_str = volume_result.get("output_data", "{}")
+                try:
+                    self.volume_plan = json.loads(volume_plan_str)
+                except Exception:
+                    self.volume_plan = {}
+
+                # 保存分卷计划到磁盘
+                volume_file = self.book_dir / f"volume_{self.current_volume_num}_plan.json"
+                with open(volume_file, "w", encoding="utf-8") as f:
+                    json.dump(self.volume_plan, f, ensure_ascii=False, indent=2)
+                print(f"✓ 已生成并保存默认分卷计划: {volume_file}")
             except Exception as e:
-                print(f"⚠ 加载历史记录文件失败 {lore_file}: {e}")
-                pass
+                print(f"⚠ 无法生成默认分卷计划: {e}")
+                self.volume_plan = {}
+                print("✓ 将从第 1 卷开始（未生成分卷计划）")
         
         if self.story_history:
             print(f"✓ 已加载 {len(self.story_history)} 条历史记录")
@@ -309,7 +402,7 @@ class MainLoop:
         volume_file = self.book_dir / f"volume_{self.current_volume_num}_plan.json"
         with open(volume_file, "w", encoding="utf-8") as f:
             json.dump(self.volume_plan, f, ensure_ascii=False, indent=2)
-        print(f"✓ 第一卷计划已保存: {volume_file}")
+        print(f"✓ 第{self.current_volume_num}卷计划已保存: {volume_file}")
         
         print("\n✓ 阶段1完成！")
 
@@ -332,7 +425,7 @@ class MainLoop:
         # C. 情景工程师
         print("\n[C] 情景工程师正在规划剧情...")
         
-        # 准备历史档案馆的相关设定
+        # 准备历史档案馆的相关设定（仅收集摘要供剧情工程师参考）
         lore_context = ""
         if self.lore_records:
             recent_records = self.lore_records[-5:]  # 最近5条记录
@@ -344,37 +437,68 @@ class MainLoop:
                     if summary:
                         lore_context += f"- {summary}\n"
                 except Exception:
-                    pass
-        
-        # 构建故事历史（合并所有上下文信息）
-        story_history_text = "\n".join(self.story_history[-3:]) if self.story_history else "这是小说的开始。"
-        
-        # 合并所有历史信息
-        full_story_history = f"{story_history_text}\n\n{lore_context}"
-        
-        # 保存full_story_history供后续使用
-        story_history_for_draft = story_history_text
-        
-        plot_engineer = PlotEngineer(
-            world_setting=self.get_novel_setting(),
-            db_state=self.db.get_state(),
-            story_history=full_story_history,
-        )
-        plot_result = plot_engineer.run()
-        plot_data_str = plot_result.get("element_data", "{}")
-        
-        try:
-            plot_data = json.loads(plot_data_str)
-        except Exception:
-            plot_data = {}
-        
-        plot_arc = plot_data.get("plot_arc", [])
-        if not plot_arc:
-            raise ValueError("情景工程师未生成有效的剧情大纲")
-        
-        # 使用第一个章节的大纲
-        chapter_outline = plot_arc[0]
-        plot_analysis = plot_data.get("plot_analysis", "")
+                    continue
+
+        # 将故事历史与档案上下文合并，供剧情/正文生成使用
+        full_story_history = "\n".join(self.story_history) if self.story_history else ""
+        story_history_for_draft = full_story_history + ("\n\n" + lore_context if lore_context else "")
+
+        # 确保有可用的 plot_arc；如果为空则调用剧情工程师生成
+        plot_analysis = ""
+        plot_data = {}
+        if not self.plot_arc:
+            print("✓ 当前没有可用的 plot_arc，调用剧情工程师生成...")
+            try:
+                plot_engineer = PlotEngineer(
+                    world_setting=self.get_novel_setting(),
+                    db_state=self.db.get_state(),
+                    story_history=full_story_history,
+                )
+                plot_result = plot_engineer.run()
+
+                plot_data_str = plot_result.get("element_data") or plot_result.get("output_data") or "{}"
+                try:
+                    plot_data = json.loads(plot_data_str) if isinstance(plot_data_str, str) else (plot_data_str or {})
+                except Exception:
+                    plot_data = {}
+
+                self.plot_arc = plot_data.get("plot_arc", []) or []
+                self.plot_arc_index = 0
+                plot_analysis = plot_data.get("plot_analysis", "")
+
+                if self.plot_arc:
+                    # 保存到磁盘以便后续继续使用
+                    try:
+                        with open(self.book_dir / "plot_data.json", "w", encoding="utf-8") as f:
+                            json.dump(plot_data, f, ensure_ascii=False, indent=2)
+                        print(f"✓ 已生成并保存 plot_data.json（{len(self.plot_arc)} 条）: {self.book_dir / 'plot_data.json'}")
+                    except Exception:
+                        print("⚠ 已生成 plot_arc，但无法保存 plot_data.json 到磁盘")
+                else:
+                    raise ValueError("情景工程师未生成有效的剧情大纲")
+            except Exception as e:
+                raise RuntimeError(f"无法生成剧情大纲: {e}")
+        else:
+            # 已有 plot_arc，直接使用当前索引处的大纲
+            chapter_outline = self.plot_arc[self.plot_arc_index]
+            # 尝试从磁盘读取 plot_analysis（如果文件存在且为 dict）
+            try:
+                with open(self.book_dir / "plot_data.json", "r", encoding="utf-8") as f:
+                    saved = json.load(f)
+                    if isinstance(saved, dict):
+                        plot_analysis = saved.get("plot_analysis", "")
+                    else:
+                        try:
+                            pd = json.loads(saved)
+                            plot_analysis = pd.get("plot_analysis", "")
+                        except Exception:
+                            plot_analysis = ""
+            except Exception:
+                plot_analysis = ""
+
+        # 使用当前索引的大纲（如果刚生成则已经设置 index=0 并且 chapter_outline 需要从 plot_arc)
+        if 'chapter_outline' not in locals():
+            chapter_outline = self.plot_arc[self.plot_arc_index]
         
         print(f"✓ 剧情大纲已生成: {chapter_outline.get('title', '未命名')}")
         
@@ -482,42 +606,53 @@ class MainLoop:
                     plot_result = plot_engineer.run()
                     plot_data_str = plot_result.get("element_data", "{}")
                     try:
-                        plot_data = json.loads(plot_data_str)
-                        plot_arc = plot_data.get("plot_arc", [])
-                        if plot_arc:
-                            chapter_outline = plot_arc[0]
-                            plot_analysis = plot_data.get("plot_analysis", "")
-                            
-                            # 重新准备参与角色数据
-                            participating_char_ids = chapter_outline.get("participating_characters", [])
-                            participating_char_data = []
-                            db_state = self.db.get_state()
-                            
-                            if db_state.get("protagonist"):
-                                participating_char_data.append(db_state["protagonist"])
-                            
-                            for char_id in participating_char_ids:
-                                for char_list in [db_state.get("supporting_characters", []), db_state.get("villains", [])]:
-                                    for char in char_list:
-                                        if char.get("id") == char_id:
-                                            participating_char_data.append(char)
-                                            break
-                            
-                            participating_characters_json = json.dumps(participating_char_data, ensure_ascii=False, indent=2)
-                            
-                            # 重新构建plot_data_for_draft
-                            plot_data_for_draft = {
-                                "location_id": chapter_outline.get("location_id", ""),
-                                "plot_points": json.dumps(chapter_outline.get("plot_points", []), ensure_ascii=False),
-                                "participating_characters": participating_characters_json,
-                                "key_items_used": json.dumps(chapter_outline.get("key_items_used", []), ensure_ascii=False),
-                                "chapter_num": chapter_outline.get("chapter_num", self.current_chapter_num),
-                                "expected_reader_reaction": chapter_outline.get("expected_reader_reaction", ""),
-                                "emotional_tone": chapter_outline.get("emotional_tone", ""),
-                                "cliffhanger": chapter_outline.get("cliffhanger", ""),
-                            }
+                        plot_data = json.loads(plot_data_str) if isinstance(plot_data_str, str) else (plot_data_str or {})
                     except Exception:
-                        pass
+                        plot_data = {}
+
+                    new_plot_arc = plot_data.get("plot_arc", [])
+                    if new_plot_arc:
+                        # 保存新的标准 plot_data 到磁盘
+                        try:
+                            with open(self.book_dir / "plot_data.json", "w", encoding="utf-8") as f:
+                                json.dump(plot_data, f, ensure_ascii=False, indent=2)
+                        except Exception:
+                            pass
+
+                        # Replace current arc with the newly planned arc and reset index
+                        self.plot_arc = new_plot_arc
+                        self.plot_arc_index = 0
+                        chapter_outline = self.plot_arc[0]
+                        plot_analysis = plot_data.get("plot_analysis", "")
+
+                        # 重新准备参与角色数据
+                        participating_char_ids = chapter_outline.get("participating_characters", [])
+                        participating_char_data = []
+                        db_state = self.db.get_state()
+
+                        if db_state.get("protagonist"):
+                            participating_char_data.append(db_state["protagonist"])
+
+                        for char_id in participating_char_ids:
+                            for char_list in [db_state.get("supporting_characters", []), db_state.get("villains", [])]:
+                                for char in char_list:
+                                    if char.get("id") == char_id:
+                                        participating_char_data.append(char)
+                                        break
+
+                        participating_characters_json = json.dumps(participating_char_data, ensure_ascii=False, indent=2)
+
+                        # 重新构建plot_data_for_draft
+                        plot_data_for_draft = {
+                            "location_id": chapter_outline.get("location_id", ""),
+                            "plot_points": json.dumps(chapter_outline.get("plot_points", []), ensure_ascii=False),
+                            "participating_characters": participating_characters_json,
+                            "key_items_used": json.dumps(chapter_outline.get("key_items_used", []), ensure_ascii=False),
+                            "chapter_num": chapter_outline.get("chapter_num", self.current_chapter_num),
+                            "expected_reader_reaction": chapter_outline.get("expected_reader_reaction", ""),
+                            "emotional_tone": chapter_outline.get("emotional_tone", ""),
+                            "cliffhanger": chapter_outline.get("cliffhanger", ""),
+                        }
                     
                     # 重新生成正文
                     draft_smith = DraftSmith(
@@ -597,11 +732,14 @@ class MainLoop:
             print("✓ 逻辑检查通过")
             audit_passed = True
             
-            # 提取数据更新
-            database_updates = continuity_data.get("database_updates", {})
+            # 提取数据更新（如果返回值为 None 则归一为 {}，以免传入 None 导致错误）
+            database_updates = continuity_data.get("database_updates") or {}
             if database_updates:
                 print("  → 更新数据库状态...")
-                self.db.update(database_updates)
+                try:
+                    self.db.update(database_updates)
+                except Exception as e:
+                    print(f"⚠ 更新数据库时出错: {e}")
         
         if not audit_passed:
             raise RuntimeError(f"章节生成失败，已重试 {max_retries} 次")
@@ -653,7 +791,11 @@ class MainLoop:
             f.write(f"# {chapter_title}\n\n")
             f.write(raw_text)
         print(f"✓ 章节已保存: {chapter_file}")
-        
+
+        # 消耗当前 plot_arc 中的一个条目（如果存在）
+        if self.plot_arc and self.plot_arc_index < len(self.plot_arc):
+            self.plot_arc_index += 1
+
         return {
             "chapter_num": self.current_chapter_num,
             "title": chapter_title,
@@ -674,6 +816,7 @@ class MainLoop:
             roadmap = self.volume_plan.get("roadmap", [])
             # 假设每个阶段约10-15章
             expected_chapters = len(roadmap) * 12
+            print(f"当前卷计划包含 {len(roadmap)} 个阶段，预计章节数约为 {expected_chapters} 章")
             return self.current_chapter_num >= expected_chapters
         return self.current_chapter_num >= 50  # 默认50章一卷
 
@@ -779,7 +922,7 @@ if __name__ == "__main__":
     # )
     # main_loop.run(max_chapters=20, max_volumes=2)
     
-    trend_analysis = TrendScout()
+    """ rend_analysis = TrendScout()
     trend=trend_analysis.run(
         platforms=["qidian"],
         rank_types=["monthly","recommend","new"],
@@ -792,4 +935,9 @@ if __name__ == "__main__":
         trend_analysis=trend,
         human_idea="主角是一座庙，通过吸收香火来获得力量，苟道+非人器物视角+玄幻。"
     )
-    main_loop.run(max_chapters=10, max_volumes=1)
+    main_loop.run(max_chapters=10, max_volumes=1) """
+    
+    main_loop = MainLoop(
+        book_dir_path="output/book_20260127",  # 指定已存在的书籍文件夹路径
+    )
+    main_loop.run(max_chapters=20, max_volumes=2)

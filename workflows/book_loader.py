@@ -45,6 +45,8 @@ def load_existing_book(loop) -> None:
 
     # 5. 确定当前卷与卷计划
     _load_volume_plan(loop, book_dir)
+    # 加载上一章的结尾，以便在生成新章节时提供给AI
+    _load_cliffhanger_from_last_chapter(loop, chapter_files)
 
     # 再次确保上一卷摘要（用于新卷规划）
     if loop.story_history:

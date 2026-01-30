@@ -238,7 +238,7 @@ def _run_audit_phase(
             except Exception as e:
                 print(f"⚠ 更新数据库时出错: {e}")
 
-    return audit_passed, raw_text, chapter_title
+    return audit_passed, raw_text, chapter_title, plot_data
 
 
 def _retry_after_review_fail(

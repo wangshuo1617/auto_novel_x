@@ -59,10 +59,18 @@ user_prompt = """
       "participating_characters": ["String (ID列表, e.g., char_protagonist, char_villain_01)"],
       "key_items_used": ["String (本章用到的道具ID)"],
       "plot_points": [
-        "String (细节点1: 开头)",
-        "String (细节点2: 发展)",
-        "String (细节点3: 高潮)",
-        "String (细节点4: 结尾)"
+        // 可接收 3-8 个情节点（scene/beat），每个情节点应包含若干子节（sub_beats），便于正文扩写成 600-800 字以上。
+        // 每个情节点的结构示例（正文生成器会依此逐条扩写）：
+        {{
+          "beat": "String (情节点总述，例如：主角被围困)",
+          "sub_beats": [
+            "String (子节1: 引子，约1-2句)",
+            "String (子节2: 发展，关键事件或对话要点)",
+            "String (子节3: 转折或冲突升级)",
+            "String (子节4: 小高潮或铺垫悬念)"
+          ],
+          "suggested_expansion": "Integer (建议扩写字数，例如 700)"
+        }}
       ],
       "emotional_tone": "String (e.g., 'Suppressed', 'Excited', 'Funny')",
       "expected_reader_reaction": "String (e.g., '愤怒，期待主角反击')",

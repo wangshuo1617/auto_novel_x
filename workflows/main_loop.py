@@ -19,12 +19,11 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from utils.database import get_database_for_book
-
-from .book_loader import load_existing_book
-from .phase_initialization import run_initialization
-from .chapter_pipeline import run_chapter_generation
-from .phase_new_volume import run_new_volume
-
+from workflows.book_loader import load_existing_book
+from workflows.phase_initialization import run_initialization
+from workflows.chapter_pipeline import run_chapter_generation
+from workflows.phase_new_volume import run_new_volume
+from agents.trend_scout import TrendScout
 
 class MainLoop:
     """
@@ -163,8 +162,22 @@ if __name__ == "__main__":
     #     main_story_goal="成仙",
     # )
     # main_loop.run(max_chapters=20, max_volumes=2)
+    """ scout = TrendScout()
+    report = scout.run(
+        platforms=["qidian"],
+        rank_types=["monthly","recommend","new"],
+        max_books=20,
+        analysis_only=True
+    )
 
     main_loop = MainLoop(
-        book_dir_path="output/book_20260127",
+        output_dir="output",
+        trend_analysis=report,
+        human_idea="主角是一座庙，通过吸收香火来获得力量，苟道+非人器物视角+玄幻。"
+    )
+    main_loop.run(max_chapters=10, max_volumes=1) """
+
+    main_loop = MainLoop(
+        book_dir_path="output/book_20260130_215334",
     )
     main_loop.run(max_chapters=20, max_volumes=2)

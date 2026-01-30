@@ -3,7 +3,7 @@
 策划与编剧 → 质检与风控 → 数据回写。
 """
 
-import json
+import json, time
 from typing import Any, Dict, List, Tuple
 
 from agents import ContinuityKeeper, DraftSmith, LoreArchivist, PlotEngineer, SimulatedReader
@@ -115,8 +115,12 @@ def _parse_draft_result(draft_result: dict, current_chapter_num: int) -> Tuple[s
 
 def _ensure_plot_arc(loop, full_story_history: str) -> Tuple[dict, str, dict]:
     plot_data: dict = {}
-    if not loop.plot_arc:
-        print("✓ 当前没有可用的 plot_arc，调用剧情工程师生成...")
+    # 检查：如果 plot_arc 为空，或当前章节索引已超过已生成大纲的范围，则需要生成新的 plot_arc
+    if not loop.plot_arc or loop.plot_arc_index >= len(loop.plot_arc):
+        if loop.plot_arc_index >= len(loop.plot_arc):
+            print(f"✓ 已用完当前 plot_arc（已使用 {len(loop.plot_arc)} 章），调用剧情工程师生成下一段 5 章大纲...")
+        else:
+            print("✓ 当前没有可用的 plot_arc，调用剧情工程师生成...")
         plot_engineer = PlotEngineer(
             world_setting=loop.get_novel_setting(),
             db_state=loop.db.get_state(),
@@ -134,9 +138,11 @@ def _ensure_plot_arc(loop, full_story_history: str) -> Tuple[dict, str, dict]:
         if not loop.plot_arc:
             raise RuntimeError("情景工程师未生成有效的剧情大纲")
         try:
-            with open(loop.book_dir / "plot_data.json", "w", encoding="utf-8") as f:
+            timestamp = int(time.time())
+            filename = f"plot_data_{timestamp}.json"
+            with open(loop.book_dir / filename, "w", encoding="utf-8") as f:
                 json.dump(plot_data, f, ensure_ascii=False, indent=2)
-            print(f"✓ 已生成并保存 plot_data.json（{len(loop.plot_arc)} 条）")
+            print(f"✓ 已生成并保存 {filename}（{len(loop.plot_arc)} 条）")
         except Exception:
             print("⚠ 已生成 plot_arc，但无法保存 plot_data.json 到磁盘")
         chapter_outline = loop.plot_arc[0]

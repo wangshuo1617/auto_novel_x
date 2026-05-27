@@ -6,7 +6,9 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from datetime import datetime
+import json
 from utils.llm_client import gemini_client, load_prompt_config
+from utils.structured_response import extract_response_text
 
 
 class SimulatedReader:
@@ -15,15 +17,28 @@ class SimulatedReader:
     对大纲或正文做读者视角的“毒点扫描 + 爽感评估”，输出可执行的整改意见。
     """
 
-    def __init__(self, genre: str, content_to_review: str):
+    def __init__(
+        self,
+        genre: str,
+        content_to_review: str,
+        review_stage: str = "chapter_draft",
+        context_payload: dict | None = None,
+        evaluation_focus: str = "",
+    ):
         self.genre = genre
         self.content_to_review = content_to_review
+        self.review_stage = review_stage
+        self.context_payload = context_payload or {}
+        self.evaluation_focus = evaluation_focus
 
         self.system_prompt = load_prompt_config("simulated_reader_prompt", "system")
         self.user_prompt = load_prompt_config(
             "simulated_reader_prompt",
             "user",
             genre=self.genre,
+            review_stage=self.review_stage,
+            evaluation_focus=self.evaluation_focus,
+            context_payload=json.dumps(self.context_payload, ensure_ascii=False, indent=2),
             content_to_review=self.content_to_review,
         )
         self.schema = load_prompt_config("simulated_reader_prompt", "json_schema")
@@ -36,7 +51,7 @@ class SimulatedReader:
         if filepath is None:
             filepath = f"reader_review_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(filepath, "w", encoding="utf-8") as f:
-            f.write(output_data["output_data"])
+            f.write(extract_response_text(output_data, ("output_data",)))
         return filepath
 
 
@@ -48,4 +63,3 @@ if __name__ == "__main__":
     review = reader.run()
     print(review)
     reader.save_review(review)
-

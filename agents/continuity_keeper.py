@@ -8,6 +8,7 @@ sys.path.insert(0, str(project_root))
 from utils.llm_client import gemini_client,load_prompt_config
 import json
 from datetime import datetime
+from utils.structured_response import extract_response_object, extract_response_text
 
 class ContinuityKeeper:
     def __init__(self, db_state: dict, chapter_outline: str, generated_text: str):
@@ -31,14 +32,13 @@ class ContinuityKeeper:
         if filepath is None:
             filepath = f"continuity_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(filepath, "w", encoding="utf-8") as f:
-            f.write(output_data["output_data"])
+            f.write(extract_response_text(output_data, ("output_data",)))
 
 if __name__ == "__main__":
     with open("draft_data_20260123_172825.md", "r", encoding="utf-8") as f:
         draft_data = f.read()
     db_state = json.load(open("element_data_20260123_164221.json", "r", encoding="utf-8"))
-    plot_str = json.load(open("plot_data_20260123_165306.json", "r", encoding="utf-8"))["element_data"]
-    plot_data = json.loads(plot_str)
+    plot_data = extract_response_object(json.load(open("plot_data_20260123_165306.json", "r", encoding="utf-8")), ("element_data",))
     chapter_outline = plot_data["plot_arc"][0]["plot_points"]
     continuity_keeper = ContinuityKeeper(db_state, chapter_outline, draft_data)
     

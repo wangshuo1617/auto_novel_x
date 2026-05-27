@@ -24,6 +24,9 @@ from workflows.phase_initialization import run_initialization
 from workflows.chapter_pipeline import run_chapter_generation
 from workflows.phase_new_volume import run_new_volume
 from agents.trend_scout import TrendScout
+from utils.book_artifacts import load_json_file
+from utils.prompt_presets import DEFAULT_PROMPT_PRESET_ID, use_prompt_preset
+from utils.story_context import empty_story_memory
 
 class MainLoop:
     """
@@ -38,6 +41,7 @@ class MainLoop:
         trend_analysis: Optional[Dict] = None,
         human_idea: str = "",
         main_story_goal: str = "",
+        prompt_preset_id: str = "",
     ):
         """
         初始化主循环
@@ -70,6 +74,7 @@ class MainLoop:
         self.human_idea = human_idea
         self.main_story_goal = main_story_goal
         self.db = get_database_for_book(self.book_dir)
+        self.prompt_preset_id = prompt_preset_id or self._load_prompt_preset_id()
 
         self.world_setting: Optional[Dict] = None
         self.volume_plan: Optional[Dict] = None
@@ -81,6 +86,7 @@ class MainLoop:
         self.plot_arc: List[Dict] = []
         self.plot_arc_index: int = 0
         self.lore_records: List[Dict] = []
+        self.story_memory: Dict[str, Any] = empty_story_memory()
 
         if self.is_existing_book:
             load_existing_book(self)
@@ -94,11 +100,13 @@ class MainLoop:
 
     def initialize(self) -> None:
         """阶段1: 创世与战略。若为已有书籍则跳过。"""
-        run_initialization(self)
+        with use_prompt_preset(self.prompt_preset_id):
+            run_initialization(self)
 
     def generate_chapter(self) -> Dict[str, Any]:
         """阶段2–4: 生成单章内容。返回本章的 chapter_num / title / content / plot_data。"""
-        return run_chapter_generation(self)
+        with use_prompt_preset(self.prompt_preset_id):
+            return run_chapter_generation(self)
 
     def check_volume_complete(self) -> bool:
         """检查当前卷是否完成。"""
@@ -111,7 +119,8 @@ class MainLoop:
 
     def start_new_volume(self) -> None:
         """开始新的一卷：委托给 phase_new_volume 执行。"""
-        run_new_volume(self)
+        with use_prompt_preset(self.prompt_preset_id):
+            run_new_volume(self)
 
     def run(self, max_chapters: int = 100, max_volumes: int = 10) -> None:
         """运行主循环。"""
@@ -119,31 +128,40 @@ class MainLoop:
         print("自动化小说生成系统启动")
         print("=" * 60)
 
-        self.initialize()
+        with use_prompt_preset(self.prompt_preset_id):
+            self.initialize()
 
-        while self.current_chapter_num <= max_chapters and self.current_volume_num <= max_volumes:
-            try:
-                self.generate_chapter()
+            while self.current_chapter_num <= max_chapters and self.current_volume_num <= max_volumes:
+                try:
+                    self.generate_chapter()
 
-                if self.check_volume_complete():
-                    print(f"\n✓ 第 {self.current_volume_num} 卷已完成")
-                    if self.current_volume_num < max_volumes:
-                        self.start_new_volume()
+                    if self.check_volume_complete():
+                        print(f"\n✓ 第 {self.current_volume_num} 卷已完成")
+                        if self.current_volume_num < max_volumes:
+                            self.start_new_volume()
+                        else:
+                            print("\n已达到最大卷数，生成结束")
+                            break
                     else:
-                        print("\n已达到最大卷数，生成结束")
-                        break
-                else:
-                    self.current_chapter_num += 1
-            except Exception as e:
-                print(f"\n✗ 生成章节时出错: {e}")
-                import traceback
-                traceback.print_exc()
-                break
+                        self.current_chapter_num += 1
+                except Exception as e:
+                    print(f"\n✗ 生成章节时出错: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    break
 
         print("\n" + "=" * 60)
         print("小说生成完成！")
         print(f"输出目录: {self.book_dir}")
         print("=" * 60)
+
+    def _load_prompt_preset_id(self) -> str:
+        if not self.book_dir.exists():
+            return DEFAULT_PROMPT_PRESET_ID
+        meta = load_json_file(self.book_dir / "book_meta.json", {})
+        if isinstance(meta, dict):
+            return str(meta.get("prompt_preset_id") or DEFAULT_PROMPT_PRESET_ID)
+        return DEFAULT_PROMPT_PRESET_ID
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@
 - **多智能体协作**：世界架构师、元素设计师、分卷导演、情景工程师、正文塑造者、毒舌书评人、连贯性守门员、历史档案馆等
 - **支持断点续写**：可从已有书籍目录继续创作，自动恢复世界观、卷计划、剧情弧与历史记录
 - **每书独立数据库**：SQLite 存储角色、物品、地图等，便于单本书状态管理
+- **Prompt 预设体系**：支持维护多套 agent prompt，并为每本书绑定独立的 prompt 预设
 
 ## 环境要求
 
@@ -46,6 +47,7 @@ main_loop = MainLoop(
     trend_analysis={},  # 可选：市场趋势分析（见下方 TrendScout）
     human_idea="主角是一座庙，通过吸收香火来获得力量，苟道+非人器物视角+玄幻。",
     main_story_goal="成仙",
+    prompt_preset_id="default",  # 可选：指定本书使用的 Prompt 预设
 )
 main_loop.run(max_chapters=10, max_volumes=1)
 ```
@@ -56,8 +58,53 @@ main_loop.run(max_chapters=10, max_volumes=1)
 main_loop = MainLoop(
     book_dir_path="output/book_20260130_215334",
     main_story_goal="成仙",  # 可更新全书目标
+    prompt_preset_id="default",  # 可选；不传则优先读取 book_meta.json 中记录的预设
 )
 main_loop.run(max_chapters=20, max_volumes=2)
+```
+
+### 4. 启动前端控制台
+
+```bash
+streamlit run frontend/app.py
+```
+
+前端支持：
+
+- 新建并初始化书籍
+- 通过侧边栏顶部按钮打开 Prompt 编辑弹窗，新建多套 Prompt 预设，并编辑每个 agent 的 prompt / schema
+- 新建书籍时选择 Prompt 预设，并在主区域的 Prompt 配置 tab 中为当前书籍切换绑定预设
+- 生成下一章 / 手动开启新卷
+- 阅读章节正文与对应 lore 档案
+- 编辑 JSON / Markdown 产出物
+- 查看并重建当前数据库状态
+
+### 5. 以 systemd 后台运行前端
+
+仓库内已提供：
+
+- `scripts/run_frontend.sh`：前端启动脚本
+- `systemd/auto-novel-x-frontend.service`：systemd unit
+
+如果仓库路径不是 `/root/auto_novel_x`，请先修改 unit 文件中的 `User`、`WorkingDirectory` 和 `ExecStart`。
+
+```bash
+sudo cp systemd/auto-novel-x-frontend.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now auto-novel-x-frontend
+```
+
+常用命令：
+
+```bash
+# 重启前端
+sudo systemctl restart auto-novel-x-frontend
+
+# 查看状态
+sudo systemctl status auto-novel-x-frontend
+
+# 查看日志
+sudo journalctl -u auto-novel-x-frontend -f
 ```
 
 **结合趋势侦察（可选）：**
@@ -103,9 +150,11 @@ auto_novel_x/
 │   ├── phase_initialization.py   # 阶段1：创世与战略
 │   ├── chapter_pipeline.py # 阶段2–4：单章流水线
 │   └── phase_new_volume.py  # 开新卷
+├── prompt_presets/          # Prompt 预设（运行时自动生成默认预设，可在前端编辑）
 ├── utils/
 │   ├── database.py          # 每书 SQLite 数据库
-│   └── llm_client.py        # Gemini 客户端
+│   ├── llm_client.py        # Gemini 客户端
+│   └── prompt_presets.py    # Prompt 预设加载与运行时切换
 ├── memory/                  # 记忆与向量存储（预留）
 ├── config.py
 ├── pyproject.toml
@@ -129,10 +178,22 @@ auto_novel_x/
 - `world_setting.json` / `world_setting.md`：世界观与商业分析
 - `element_data.json`：角色、物品、地图等
 - `volume_*_plan.json`：各卷计划
-- `plot_data.json`：剧情弧（多章大纲）
-- `chapter_001.md` …：章节正文
-- `lore_record_ch*.json`：各章历史档案
+- `volume_001_plot_arc_ch001_ch010.json` …：按章节范围保存的剧情弧（每份通常覆盖 10 章）
+- `plot_data.json`：当前生效的剧情弧缓存（运行时 canonical 文件）
+- `volume_001_chapter_001.md` …：章节正文（旧数据仍兼容 `chapter_001.md`）
+- `volume_001_lore_record_ch001.json` …：各章历史档案（旧数据仍兼容 `lore_record_ch*.json`）
+- `book_meta.json`：前端记录的创意、全书目标、Prompt 预设等元信息
 - `database.db`：SQLite 数据库（角色状态、背包、关系等）
+
+## Prompt 预设
+
+- 所有 agent prompt 现在都通过 `prompt_presets/<preset_id>/` 加载。
+- 系统首次访问时会自动把 `agents/prompt/` 中的当前模板落盘为 `default` 预设。
+- 你可以在前端的 **Prompt 编辑** tab 中：
+  - 克隆已有预设，生成新的风格化 prompt 套装
+  - 编辑每个 agent 的 `system_prompt` / `user_prompt` / `json_schema`
+  - 将某套预设绑定到当前书籍
+- 每本书绑定的预设会记录在其 `book_meta.json` 中；后续继续生成时会自动沿用。
 
 ## 脚本
 

@@ -8,6 +8,7 @@ sys.path.insert(0, str(project_root))
 import json
 from datetime import datetime
 from utils.llm_client import gemini_client, load_prompt_config
+from utils.structured_response import extract_response_text
 
 
 class LoreArchivist:
@@ -16,16 +17,30 @@ class LoreArchivist:
     读取润色后的最新章节正文，抽取摘要/伏笔/新增设定等信息，便于入库检索与后续连贯性维护。
     """
 
-    def __init__(self, chapter_num: int, chapter_title: str, final_chapter_text: str):
+    def __init__(
+        self,
+        chapter_num: int,
+        chapter_title: str,
+        final_chapter_text: str,
+        previous_story_summary: str = "",
+        recent_story_summaries: str = "",
+        active_threads_summary: str = "",
+    ):
         self.chapter_num = chapter_num
         self.chapter_title = chapter_title
         self.final_chapter_text = final_chapter_text
+        self.previous_story_summary = previous_story_summary
+        self.recent_story_summaries = recent_story_summaries
+        self.active_threads_summary = active_threads_summary
 
         self.system_prompt = load_prompt_config("lore_archivist_prompt", "system")
         prepare_data = {
             "chapter_num": self.chapter_num,
             "chapter_title": self.chapter_title,
             "final_chapter_text": self.final_chapter_text,
+            "previous_story_summary": self.previous_story_summary,
+            "recent_story_summaries": self.recent_story_summaries,
+            "active_threads_summary": self.active_threads_summary,
         }
         self.user_prompt = load_prompt_config("lore_archivist_prompt", "user", **prepare_data)
         self.schema = load_prompt_config("lore_archivist_prompt", "json_schema")
@@ -38,7 +53,7 @@ class LoreArchivist:
         if filepath is None:
             filepath = f"lore_record_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(filepath, "w", encoding="utf-8") as f:
-            f.write(output_data["output_data"])
+            f.write(extract_response_text(output_data, ("output_data",)))
         return filepath
 
 
@@ -52,4 +67,3 @@ if __name__ == "__main__":
     record = archivist.run()
     print(record)
     archivist.save_lore_record(record)
-

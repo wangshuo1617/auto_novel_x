@@ -1,0 +1,19 @@
+[Unit]
+Description=Auto Novel X Streamlit Frontend
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/auto_novel_x
+Environment=PYTHONUNBUFFERED=1
+Environment=STREAMLIT_ADDRESS=0.0.0.0
+Environment=STREAMLIT_PORT=8501
+ExecStart=/root/auto_novel_x/scripts/run_frontend.sh
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

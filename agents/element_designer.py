@@ -13,7 +13,7 @@ class ElementDesigner:
     def __init__(self, world_setting: dict):
         self.world_setting = world_setting
 
-    def run(self, mode: str = "inital", request_payload: dict = None) -> dict:
+    def run(self, mode: str = "inital", request_payload: dict = None, review_feedback: str = "") -> dict:
         system_prompt = load_prompt_config("element_designer_prompt", "system")
         schema = load_prompt_config("element_designer_prompt", "json_schema")
 
@@ -22,9 +22,16 @@ class ElementDesigner:
                 "element_designer_prompt",
                 "inital",
                 world_setting=json.dumps(self.world_setting, ensure_ascii=False, indent=2),
+                review_feedback=review_feedback,
             )
         elif mode == "addon":
-            user_prompt = load_prompt_config("element_designer_prompt", "addon", request_payload)
+            payload = {"review_feedback": review_feedback}
+            for key, value in (request_payload or {}).items():
+                if isinstance(value, (dict, list)):
+                    payload[key] = json.dumps(value, ensure_ascii=False, indent=2)
+                else:
+                    payload[key] = value
+            user_prompt = load_prompt_config("element_designer_prompt", "addon", **payload)
         else:
             raise ValueError(f"Unknown mode: {mode}")
 

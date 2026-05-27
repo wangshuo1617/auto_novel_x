@@ -250,7 +250,9 @@ class Database:
         
         # 更新主角状态
         if "protagonist" in updates:
-            prot_updates = updates["protagonist"]
+            prot_updates = updates["protagonist"] or {}
+            if not isinstance(prot_updates, dict):
+                raise ValueError("database_updates.protagonist 必须是对象")
             # 获取主角ID
             cursor.execute("SELECT id FROM characters WHERE type = 'protagonist' LIMIT 1")
             row = cursor.fetchone()
@@ -263,7 +265,9 @@ class Database:
                 
                 # 更新背包
                 if "inventory_changes" in prot_updates:
-                    changes = prot_updates["inventory_changes"]
+                    changes = prot_updates["inventory_changes"] or {}
+                    if not isinstance(changes, dict):
+                        raise ValueError("database_updates.protagonist.inventory_changes 必须是对象")
                     for item_id in changes.get("add", []):
                         self._add_item_to_inventory(char_id, item_id)
                     for item_id in changes.get("remove", []):
@@ -271,11 +275,19 @@ class Database:
                 
                 # 更新属性
                 if "stat_changes" in prot_updates:
-                    self._update_character_stats(char_id, prot_updates["stat_changes"])
+                    stat_changes = prot_updates["stat_changes"] or {}
+                    if not isinstance(stat_changes, dict):
+                        raise ValueError("database_updates.protagonist.stat_changes 必须是对象")
+                    self._update_character_stats(char_id, stat_changes)
         
         # 更新其他角色状态
         if "characters_updates" in updates:
-            for char_update in updates["characters_updates"]:
+            char_updates = updates["characters_updates"] or []
+            if not isinstance(char_updates, list):
+                raise ValueError("database_updates.characters_updates 必须是数组")
+            for char_update in char_updates:
+                if not isinstance(char_update, dict):
+                    raise ValueError("database_updates.characters_updates 的每一项都必须是对象")
                 char_id = char_update["id"]
                 
                 if "new_status" in char_update:

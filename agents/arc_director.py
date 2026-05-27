@@ -8,6 +8,7 @@ sys.path.insert(0, str(project_root))
 import json
 from datetime import datetime
 from utils.llm_client import gemini_client, load_prompt_config
+from utils.structured_response import extract_response_text
 
 
 def _to_pretty_json(value) -> str:
@@ -30,12 +31,14 @@ class ArcDirector:
         main_story_goal: str,
         previous_volume_summary: str,
         volume_num: int,
+        review_feedback: str = "",
     ):
         self.world_setting = world_setting
         self.db_state = db_state
         self.main_story_goal = main_story_goal
         self.previous_volume_summary = previous_volume_summary
         self.volume_num = volume_num
+        self.review_feedback = review_feedback
 
         self.system_prompt = load_prompt_config("arc_director_prompt", "system")
         prepare_data = {
@@ -44,6 +47,7 @@ class ArcDirector:
             "main_story_goal": self.main_story_goal,
             "previous_volume_summary": self.previous_volume_summary,
             "volume_num": self.volume_num,
+            "review_feedback": self.review_feedback,
         }
         self.user_prompt = load_prompt_config("arc_director_prompt", "user", **prepare_data)
         self.schema = load_prompt_config("arc_director_prompt", "json_schema")
@@ -56,7 +60,7 @@ class ArcDirector:
         if filepath is None:
             filepath = f"volume_plan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(filepath, "w", encoding="utf-8") as f:
-            f.write(output_data["output_data"])
+            f.write(extract_response_text(output_data, ("output_data",)))
         return filepath
 
 
@@ -72,4 +76,3 @@ if __name__ == "__main__":
     plan = arc_director.run()
     print(plan)
     arc_director.save_volume_plan(plan)
-

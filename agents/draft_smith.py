@@ -10,6 +10,7 @@ sys.path.insert(0, str(project_root))
 from utils.llm_client import gemini_client,load_prompt_config
 import json
 from datetime import datetime
+from utils.structured_response import extract_response_object, extract_response_text
 
 class DraftSmith:
     def __init__(self, world_setting: dict, db_state: dict, story_history: str, cliffhanger: str, plot_analysis:str, plot_data: dict):
@@ -90,7 +91,7 @@ class DraftSmith:
         if filepath is None:
             filepath = f"draft_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
         with open(filepath, "w", encoding="utf-8") as f:
-            f.write(draft_data["element_data"])
+            f.write(extract_response_text(draft_data, ("draft_content", "element_data")))
 
 if __name__ == "__main__":
     with open("world_setting.json", "r", encoding="utf-8") as f:
@@ -99,9 +100,9 @@ if __name__ == "__main__":
         db_state = json.load(f)
     story_history = ""
     cliffhanger = ""
-    plot_str = json.load(open("plot_data_20260123_165306.json", "r", encoding="utf-8"))["element_data"]
-    plot_data = json.loads(plot_str)["plot_arc"][0]
-    plot_analysis = json.loads(plot_str)["plot_analysis"]
+    plot_payload = extract_response_object(json.load(open("plot_data_20260123_165306.json", "r", encoding="utf-8")), ("element_data",))
+    plot_data = plot_payload["plot_arc"][0]
+    plot_analysis = plot_payload["plot_analysis"]
     draft_smith = DraftSmith(world_setting, db_state, story_history, cliffhanger, plot_analysis, plot_data)
     draft_data = draft_smith.run()
     print(draft_data)

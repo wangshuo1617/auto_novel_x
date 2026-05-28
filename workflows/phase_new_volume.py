@@ -4,10 +4,8 @@
 
 import json
 from typing import Any
-
 from agents import ArcDirector, ElementDesigner
-from utils.book_artifacts import load_json_file, write_json_file
-from utils.structured_response import extract_response_object
+from utils.book_artifacts import write_json_file
 from workflows.review_utils import is_review_passed, run_reader_review
 
 
@@ -19,11 +17,11 @@ def run_new_volume(loop) -> None:
 
     if loop.story_memory.get("running_summary"):
         loop.previous_volume_summary = loop.story_memory["running_summary"]
-    elif loop.story_history:
-        loop.previous_volume_summary = "\n".join(loop.story_history[-10:])
 
     loop.current_volume_num += 1
     loop.current_chapter_num = 1
+    loop.plot_arc = []
+    loop.plot_arc_index = 0
 
     print("\n[F] 分卷导演正在规划新卷...")
     review_data = {}
@@ -38,7 +36,9 @@ def run_new_volume(loop) -> None:
             review_feedback=feedback_text,
         )
         volume_result = arc_director.run()
-        loop.volume_plan = extract_response_object(volume_result, ("output_data",))
+        if not isinstance(volume_result, dict):
+            raise ValueError("ArcDirector 必须返回 JSON 对象")
+        loop.volume_plan = volume_result
         review_data = run_reader_review(
             review_stage="volume_plan",
             content_to_review=loop.volume_plan,
@@ -81,7 +81,9 @@ def _run_volume_asset_addon(loop) -> None:
             request_payload=_build_volume_addon_prompt_payload(loop, db_state),
             review_feedback=feedback_text,
         )
-        addon_raw = extract_response_object(addon_result, ("element_data", "output_data")) or addon_result or {}
+        if not isinstance(addon_result, dict):
+            raise ValueError("ElementDesigner addon 必须返回 JSON 对象")
+        addon_raw = addon_result
         normalized_assets = _normalize_addon_assets(addon_raw, loop.volume_plan or {})
         review_data = run_reader_review(
             review_stage="element_design",
@@ -107,9 +109,6 @@ def _run_volume_asset_addon(loop) -> None:
 
     if any(normalized_assets.get(key) for key in ("supporting_characters", "villains", "locations", "items")):
         loop.db.merge_element_data(normalized_assets)
-        snapshot_file = loop.book_dir / "element_data.json"
-        snapshot = load_json_file(snapshot_file, {})
-        write_json_file(snapshot_file, _merge_element_snapshots(snapshot, normalized_assets))
         print("✓ 新卷资产已写入数据库")
     else:
         print("⚠ 新卷资产扩展未产出可入库的角色/地点/物品，已仅保留原始产物")
@@ -302,18 +301,3 @@ def _is_villain_character(char: dict[str, Any], main_villain_id: str) -> bool:
     ).lower()
     return any(token in role_text for token in ("villain", "boss", "反派", "敌", "仇"))
 
-
-def _merge_element_snapshots(existing: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(existing) if isinstance(existing, dict) else {}
-    for key in ("supporting_characters", "villains", "locations", "items"):
-        existing_items = merged.get(key, []) if isinstance(merged.get(key), list) else []
-        update_items = updates.get(key, []) if isinstance(updates.get(key), list) else []
-        by_id = {}
-        for item in existing_items:
-            if isinstance(item, dict) and item.get("id"):
-                by_id[item["id"]] = item
-        for item in update_items:
-            if isinstance(item, dict) and item.get("id"):
-                by_id[item["id"]] = item
-        merged[key] = list(by_id.values())
-    return merged

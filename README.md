@@ -77,7 +77,8 @@ streamlit run frontend/app.py
 - 生成下一章 / 手动开启新卷
 - 阅读章节正文与对应 lore 档案
 - 编辑 JSON / Markdown 产出物
-- 查看并重建当前数据库状态
+- 按 SQLite 表查看、编辑、新增和删除角色/地点/物品等数据库记录
+- 查看书籍健康检查、章节生成状态机记录和 LLM 调用日志
 
 ### 5. 以 systemd 后台运行前端
 
@@ -153,7 +154,10 @@ auto_novel_x/
 ├── prompt_presets/          # Prompt 预设（运行时自动生成默认预设，可在前端编辑）
 ├── utils/
 │   ├── database.py          # 每书 SQLite 数据库
+│   ├── consistency_checker.py # 书籍产物/数据库一致性检查
+│   ├── generation_state.py  # 章节生成状态机记录
 │   ├── llm_client.py        # Gemini 客户端
+│   ├── llm_logging.py       # LLM 调用日志归档
 │   └── prompt_presets.py    # Prompt 预设加载与运行时切换
 ├── memory/                  # 记忆与向量存储（预留）
 ├── config.py
@@ -168,22 +172,23 @@ auto_novel_x/
 | **1. 创世与战略** | 世界架构师生成世界观（含商业分析）→ 元素设计师创建初始角色/物品 → 分卷导演规划第一卷 |
 | **2. 策划与编剧** | 情景工程师生成剧情大纲 → 正文塑造者撰写章节正文 |
 | **3. 质检与风控** | 毒舌书评人审核爽度（不通过则重写大纲）→ 连贯性守门员检查逻辑（不通过则重写正文） |
-| **4. 数据回写** | 历史档案馆归档 → 更新故事历史、悬念 → 保存章节 Markdown |
-| **5. 循环** | 卷完成后由分卷导演规划新卷，继续下一章 |
+| **4. 数据回写** | 历史档案馆归档 → 更新 `story_memory`、roadmap 完成标记、悬念 → 保存章节 Markdown |
+| **5. 循环** | 当前卷 roadmap 阶段全部完成后由分卷导演规划新卷，继续下一章 |
 
 ## 输出格式
 
 每本书对应一个目录（如 `output/book_20260130_215334/`），包含：
 
 - `world_setting.json` / `world_setting.md`：世界观与商业分析
-- `element_data.json`：角色、物品、地图等
+- `database.db`：SQLite 数据库（角色、地点、物品、状态、背包、关系等，前端直接从这里展示和编辑）
+- `story_memory.json`：长期累计摘要、最近章节摘要、未完结线索、知识碎片与 roadmap 完成标记
 - `volume_*_plan.json`：各卷计划
 - `volume_001_plot_arc_ch001_ch010.json` …：按章节范围保存的剧情弧（每份通常覆盖 10 章）
-- `plot_data.json`：当前生效的剧情弧缓存（运行时 canonical 文件）
-- `volume_001_chapter_001.md` …：章节正文（旧数据仍兼容 `chapter_001.md`）
-- `volume_001_lore_record_ch001.json` …：各章历史档案（旧数据仍兼容 `lore_record_ch*.json`）
+- `volume_001_chapter_001.md` …：章节正文
+- `volume_001_lore_record_ch001.json` …：各章历史档案
+- `generation_state/` 与 `latest_generation_state.json`：章节生成状态机记录，用于失败排查与恢复判断
+- `llm_runs/`：每次 agent 调用的 prompt、schema、响应、耗时与错误日志
 - `book_meta.json`：前端记录的创意、全书目标、Prompt 预设等元信息
-- `database.db`：SQLite 数据库（角色状态、背包、关系等）
 
 ## Prompt 预设
 

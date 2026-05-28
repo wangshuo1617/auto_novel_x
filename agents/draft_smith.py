@@ -1,23 +1,22 @@
-"""正文铸造者模块 - 待实现"""
-
-import sys
-from pathlib import Path
-
-# 添加项目根目录到路径
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+"""正文铸造者模块。"""
 
 from utils.llm_client import gemini_client,load_prompt_config
 import json
-from datetime import datetime
-from utils.structured_response import extract_response_object, extract_response_text
 
 class DraftSmith:
-    def __init__(self, world_setting: dict, db_state: dict, story_history: str, cliffhanger: str, plot_analysis:str, plot_data: dict):
+    def __init__(
+        self,
+        world_setting: dict,
+        db_state: dict,
+        story_history: str,
+        previous_chapter_ending: str,
+        plot_analysis: str,
+        plot_data: dict,
+    ):
         self.world_setting = world_setting
         self.db_state = db_state
         self.story_history = story_history
-        self.cliffhanger = cliffhanger
+        self.previous_chapter_ending = previous_chapter_ending
         self.plot_analysis = plot_analysis
         self.plot_data = plot_data
         self.system_prompt = load_prompt_config("draft_smith_prompt", "system")
@@ -26,7 +25,8 @@ class DraftSmith:
             "world_setting": json.dumps(self.world_setting, ensure_ascii=False, indent=2) if isinstance(self.world_setting, dict) else str(self.world_setting),
             "db_state": json.dumps(self.db_state, ensure_ascii=False, indent=2) if isinstance(self.db_state, dict) else str(self.db_state),
             "story_history": self.story_history,
-            "cliffhanger": self.cliffhanger,
+            "previous_chapter_ending": self.previous_chapter_ending,
+            "chapter_cliffhanger": self.plot_data.get("chapter_cliffhanger", self.plot_data.get("cliffhanger", "")),
             "plot_analysis": self.plot_analysis
         }
         
@@ -86,24 +86,3 @@ class DraftSmith:
     def run(self) -> dict:
         response = gemini_client(self.system_prompt, self.user_prompt, self.schema)
         return response
-    
-    def save_draft_data(self, draft_data: dict, filepath: str = None) -> str:
-        if filepath is None:
-            filepath = f"draft_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(extract_response_text(draft_data, ("draft_content", "element_data")))
-
-if __name__ == "__main__":
-    with open("world_setting.json", "r", encoding="utf-8") as f:
-        world_setting = json.load(f)["novel_setting"]
-    with open("element_data_20260123_164221.json", "r", encoding="utf-8") as f:
-        db_state = json.load(f)
-    story_history = ""
-    cliffhanger = ""
-    plot_payload = extract_response_object(json.load(open("plot_data_20260123_165306.json", "r", encoding="utf-8")), ("element_data",))
-    plot_data = plot_payload["plot_arc"][0]
-    plot_analysis = plot_payload["plot_analysis"]
-    draft_smith = DraftSmith(world_setting, db_state, story_history, cliffhanger, plot_analysis, plot_data)
-    draft_data = draft_smith.run()
-    print(draft_data)
-    draft_smith.save_draft_data(draft_data)

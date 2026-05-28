@@ -1,14 +1,6 @@
-import sys
-from pathlib import Path
-
-# 添加项目根目录到路径
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
-
 import json
-from datetime import datetime
+
 from utils.llm_client import gemini_client, load_prompt_config
-from utils.structured_response import extract_response_text
 
 
 class LoreArchivist:
@@ -25,6 +17,9 @@ class LoreArchivist:
         previous_story_summary: str = "",
         recent_story_summaries: str = "",
         active_threads_summary: str = "",
+        volume_num: int | None = None,
+        volume_plan: dict | None = None,
+        chapter_outline: dict | None = None,
     ):
         self.chapter_num = chapter_num
         self.chapter_title = chapter_title
@@ -32,6 +27,9 @@ class LoreArchivist:
         self.previous_story_summary = previous_story_summary
         self.recent_story_summaries = recent_story_summaries
         self.active_threads_summary = active_threads_summary
+        self.volume_num = volume_num
+        self.volume_plan = volume_plan or {}
+        self.chapter_outline = chapter_outline or {}
 
         self.system_prompt = load_prompt_config("lore_archivist_prompt", "system")
         prepare_data = {
@@ -41,6 +39,9 @@ class LoreArchivist:
             "previous_story_summary": self.previous_story_summary,
             "recent_story_summaries": self.recent_story_summaries,
             "active_threads_summary": self.active_threads_summary,
+            "volume_num": self.volume_num or "",
+            "volume_plan": json.dumps(self.volume_plan, ensure_ascii=False, indent=2),
+            "chapter_outline": json.dumps(self.chapter_outline, ensure_ascii=False, indent=2),
         }
         self.user_prompt = load_prompt_config("lore_archivist_prompt", "user", **prepare_data)
         self.schema = load_prompt_config("lore_archivist_prompt", "json_schema")
@@ -48,22 +49,3 @@ class LoreArchivist:
     def run(self) -> dict:
         response = gemini_client(self.system_prompt, self.user_prompt, self.schema)
         return response
-
-    def save_lore_record(self, output_data: dict, filepath: str = None) -> str:
-        if filepath is None:
-            filepath = f"lore_record_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(extract_response_text(output_data, ("output_data",)))
-        return filepath
-
-
-if __name__ == "__main__":
-    # 简单示例（请根据你的真实数据替换）
-    chapter_num = 1
-    chapter_title = "开局一座破庙"
-    final_chapter_text = "主角在破庙中苏醒，发现香火可以转化为力量……"
-
-    archivist = LoreArchivist(chapter_num, chapter_title, final_chapter_text)
-    record = archivist.run()
-    print(record)
-    archivist.save_lore_record(record)

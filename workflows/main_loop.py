@@ -12,7 +12,7 @@
 import sys
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent
@@ -25,8 +25,9 @@ from workflows.chapter_pipeline import run_chapter_generation
 from workflows.phase_new_volume import run_new_volume
 from agents.trend_scout import TrendScout
 from utils.book_artifacts import load_json_file
+from utils.llm_logging import use_llm_log_context
 from utils.prompt_presets import DEFAULT_PROMPT_PRESET_ID, use_prompt_preset
-from utils.story_context import empty_story_memory
+from utils.story_context import completed_roadmap_stage_indexes, empty_story_memory
 
 class MainLoop:
     """
@@ -80,7 +81,7 @@ class MainLoop:
         self.volume_plan: Optional[Dict] = None
         self.current_volume_num = 1
         self.current_chapter_num = 1
-        self.story_history: List[str] = []
+        self.current_global_chapter_num = 1
         self.previous_volume_summary = ""
         self.cliffhanger = ""
         self.plot_arc: List[Dict] = []
@@ -100,26 +101,43 @@ class MainLoop:
 
     def initialize(self) -> None:
         """阶段1: 创世与战略。若为已有书籍则跳过。"""
-        with use_prompt_preset(self.prompt_preset_id):
+        with use_prompt_preset(self.prompt_preset_id), use_llm_log_context(self.book_dir, "initialize"):
             run_initialization(self)
 
     def generate_chapter(self) -> Dict[str, Any]:
         """阶段2–4: 生成单章内容。返回本章的 chapter_num / title / content / plot_data。"""
-        with use_prompt_preset(self.prompt_preset_id):
+        with use_prompt_preset(self.prompt_preset_id), use_llm_log_context(
+            self.book_dir,
+            f"generate_chapter_v{self.current_volume_num}_c{self.current_chapter_num}_g{self.current_global_chapter_num}",
+        ):
             return run_chapter_generation(self)
 
     def check_volume_complete(self) -> bool:
-        """检查当前卷是否完成。"""
+        """检查当前卷 roadmap 是否已被章节 lore 标记完成。"""
         if self.volume_plan:
             roadmap = self.volume_plan.get("roadmap", [])
-            expected_chapters = len(roadmap) * 12
-            print(f"当前卷计划包含 {len(roadmap)} 个阶段，预计章节数约为 {expected_chapters} 章")
-            return self.current_chapter_num >= expected_chapters
+            if roadmap:
+                completed_all = completed_roadmap_stage_indexes(self.story_memory, self.current_volume_num)
+                expected = set(range(1, len(roadmap) + 1))
+                completed = completed_all & expected
+                ignored = sorted(completed_all - expected)
+                missing = sorted(expected - completed)
+                complete = not missing
+                if ignored:
+                    print(f"当前卷 roadmap 忽略越界完成标记：{ignored}")
+                if complete:
+                    print(f"当前卷 roadmap 已全部完成：{sorted(completed)}")
+                else:
+                    print(f"当前卷 roadmap 尚未完成，缺少阶段：{missing}")
+                return complete
         return self.current_chapter_num >= 50
 
     def start_new_volume(self) -> None:
         """开始新的一卷：委托给 phase_new_volume 执行。"""
-        with use_prompt_preset(self.prompt_preset_id):
+        with use_prompt_preset(self.prompt_preset_id), use_llm_log_context(
+            self.book_dir,
+            f"start_new_volume_{self.current_volume_num + 1}",
+        ):
             run_new_volume(self)
 
     def run(self, max_chapters: int = 100, max_volumes: int = 10) -> None:
@@ -131,11 +149,22 @@ class MainLoop:
         with use_prompt_preset(self.prompt_preset_id):
             self.initialize()
 
-            while self.current_chapter_num <= max_chapters and self.current_volume_num <= max_volumes:
+            while self.current_global_chapter_num <= max_chapters and self.current_volume_num <= max_volumes:
                 try:
+                    if self.check_volume_complete():
+                        print(f"\n✓ 第 {self.current_volume_num} 卷已完成")
+                        if self.current_volume_num < max_volumes:
+                            self.start_new_volume()
+                        else:
+                            print("\n已达到最大卷数，生成结束")
+                            break
+
                     self.generate_chapter()
 
-                    if self.check_volume_complete():
+                    volume_complete = self.check_volume_complete()
+                    self.current_global_chapter_num += 1
+
+                    if volume_complete:
                         print(f"\n✓ 第 {self.current_volume_num} 卷已完成")
                         if self.current_volume_num < max_volumes:
                             self.start_new_volume()

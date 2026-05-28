@@ -172,7 +172,7 @@ def load_prompt_template(template_name: str, preset_id: str | None = None) -> di
     default_config = _default_prompt_config(template_name)
     normalized_id = normalize_prompt_preset_id(preset_id or get_active_prompt_preset_id())
     if normalized_id == DEFAULT_PROMPT_PRESET_ID:
-        return default_config
+        return _ensure_runtime_required_prompt_fields(template_name, default_config, default_config)
 
     template_path = _template_file_path(normalized_id, template_name)
     if not template_path.exists():
@@ -184,12 +184,31 @@ def load_prompt_template(template_name: str, preset_id: str | None = None) -> di
 
     merged = dict(default_config)
     merged.update(saved)
-    return merged
+    return _ensure_runtime_required_prompt_fields(template_name, merged, default_config)
 
 
 def get_active_prompt_preset_id() -> str:
     ensure_default_prompt_preset()
     return _ACTIVE_PROMPT_PRESET_ID.get()
+
+
+def _ensure_runtime_required_prompt_fields(
+    template_name: str,
+    config: dict[str, Any],
+    default_config: dict[str, Any],
+) -> dict[str, Any]:
+    if template_name != "lore_archivist_prompt":
+        return config
+
+    schema_text = str(config.get("json_schema", ""))
+    user_prompt = str(config.get("user_prompt", ""))
+    if "roadmap_updates" in schema_text and "{volume_plan}" in user_prompt and "{chapter_outline}" in user_prompt:
+        return config
+
+    upgraded = dict(config)
+    upgraded["user_prompt"] = default_config["user_prompt"]
+    upgraded["json_schema"] = default_config["json_schema"]
+    return upgraded
 
 
 @contextlib.contextmanager

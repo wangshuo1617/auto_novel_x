@@ -7,11 +7,8 @@ from typing import Any
 
 
 CHAPTER_FILE_RE = re.compile(r"^volume_(?P<volume>\d{3})_chapter_(?P<chapter>\d{3})\.md$")
-LEGACY_CHAPTER_FILE_RE = re.compile(r"^chapter_(?P<chapter>\d{3})\.md$")
 LORE_FILE_RE = re.compile(r"^volume_(?P<volume>\d{3})_lore_record_ch(?P<chapter>\d{3})\.json$")
-LEGACY_LORE_FILE_RE = re.compile(r"^lore_record_ch(?P<chapter>\d+)\.json$")
 VOLUME_PLAN_FILE_RE = re.compile(r"^volume_(?P<volume>\d+)_plan\.json$")
-PLOT_SNAPSHOT_FILE_RE = re.compile(r"^plot_data_(?P<timestamp>\d+)\.json$")
 PLOT_RANGE_FILE_RE = re.compile(r"^volume_(?P<volume>\d{3})_plot_arc_ch(?P<start>\d{3})_ch(?P<end>\d{3})\.json$")
 
 
@@ -71,10 +68,6 @@ def parse_chapter_identity(path: str | Path) -> tuple[int, int] | None:
     if match:
         return int(match.group("volume")), int(match.group("chapter"))
 
-    legacy_match = LEGACY_CHAPTER_FILE_RE.match(name)
-    if legacy_match:
-        return 1, int(legacy_match.group("chapter"))
-
     return None
 
 
@@ -83,10 +76,6 @@ def parse_lore_identity(path: str | Path) -> tuple[int, int] | None:
     match = LORE_FILE_RE.match(name)
     if match:
         return int(match.group("volume")), int(match.group("chapter"))
-
-    legacy_match = LEGACY_LORE_FILE_RE.match(name)
-    if legacy_match:
-        return 1, int(legacy_match.group("chapter"))
 
     return None
 
@@ -135,20 +124,7 @@ def list_volume_plan_files(book_dir: str | Path) -> list[Path]:
 def list_plot_files(book_dir: str | Path) -> list[Path]:
     directory = Path(book_dir)
     range_files = [path for path in directory.glob("volume_*_plot_arc_ch*_ch*.json") if parse_plot_range_identity(path)]
-    if range_files:
-        return sorted(range_files, key=lambda path: parse_plot_range_identity(path) or (0, 0, 0))
-
-    plot_files = []
-    for path in directory.glob("plot_data*.json"):
-        if path.name == "plot_data.json" or PLOT_SNAPSHOT_FILE_RE.match(path.name):
-            plot_files.append(path)
-
-    def sort_key(path: Path) -> tuple[int, str]:
-        if path.name == "plot_data.json":
-            return 0, path.name
-        return 1, path.name
-
-    return sorted(plot_files, key=sort_key)
+    return sorted(range_files, key=lambda path: parse_plot_range_identity(path) or (0, 0, 0))
 
 
 def list_artifact_paths(book_dir: str | Path) -> list[str]:

@@ -1,11 +1,14 @@
 from google import genai
 from google.genai import types
 import json,os,sys
+import time
+from datetime import datetime
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 from config import GEMINI_API_KEY
+from utils.llm_logging import write_llm_run_log
 from utils.prompt_presets import load_prompt_template
 
 _client = None
@@ -21,18 +24,48 @@ def _get_client():
   return _client
 
 def gemini_client(system_prompt: str, user_prompt: str, response_schema: dict,temperature: float = 0.7) -> str:
+  model = "gemini-3-pro-preview"
+  started_at = datetime.now().isoformat(timespec="seconds")
+  started_monotonic = time.monotonic()
   config = types.GenerateContentConfig(
         system_instruction=system_prompt,
         response_schema=response_schema,
         temperature=temperature,
     )
-  response = _get_client().models.generate_content(
-    model="gemini-3-pro-preview",
-    contents=user_prompt,
-    config=config
-  )
-  result = json.loads(response.text)
-  return result
+  response_text = None
+  try:
+    response = _get_client().models.generate_content(
+      model=model,
+      contents=user_prompt,
+      config=config
+    )
+    response_text = response.text
+    result = json.loads(response_text)
+    write_llm_run_log(
+      system_prompt=system_prompt,
+      user_prompt=user_prompt,
+      response_schema=response_schema,
+      model=model,
+      temperature=temperature,
+      started_at=started_at,
+      started_monotonic=started_monotonic,
+      response_text=response_text,
+      parsed_response=result,
+    )
+    return result
+  except Exception as exc:
+    write_llm_run_log(
+      system_prompt=system_prompt,
+      user_prompt=user_prompt,
+      response_schema=response_schema,
+      model=model,
+      temperature=temperature,
+      started_at=started_at,
+      started_monotonic=started_monotonic,
+      response_text=response_text,
+      error=exc,
+    )
+    raise
 
 def load_prompt_config(template_name: str,type: str, **kwargs) -> str:
   template_config = load_prompt_template(template_name)

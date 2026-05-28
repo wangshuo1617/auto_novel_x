@@ -28,6 +28,7 @@ class Database:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row  # 使查询结果可以通过列名访问
+        self.conn.execute("PRAGMA foreign_keys = ON")
         self._init_tables()
 
     def _init_tables(self):
@@ -161,11 +162,7 @@ class Database:
             # 添加状态信息
             char_id = result["protagonist"].get("id", "")
             if char_id:
-                status = self._get_character_status(char_id)
-                if status:
-                    if "current_status" not in result["protagonist"]:
-                        result["protagonist"]["current_status"] = {}
-                    result["protagonist"]["current_status"].update(status)
+                result["protagonist"]["current_status"] = self._get_character_status(char_id)
         
         # 获取配角
         cursor.execute("SELECT data FROM characters WHERE type = 'supporting'")
@@ -173,11 +170,7 @@ class Database:
             char_data = self._json_loads(row["data"])
             char_id = char_data.get("id", "")
             if char_id:
-                status = self._get_character_status(char_id)
-                if status:
-                    if "current_status" not in char_data:
-                        char_data["current_status"] = {}
-                    char_data["current_status"].update(status)
+                char_data["current_status"] = self._get_character_status(char_id)
             result["supporting_characters"].append(char_data)
         
         # 获取反派
@@ -186,11 +179,7 @@ class Database:
             char_data = self._json_loads(row["data"])
             char_id = char_data.get("id", "")
             if char_id:
-                status = self._get_character_status(char_id)
-                if status:
-                    if "current_status" not in char_data:
-                        char_data["current_status"] = {}
-                    char_data["current_status"].update(status)
+                char_data["current_status"] = self._get_character_status(char_id)
             result["villains"].append(char_data)
         
         # 获取地点
@@ -201,7 +190,13 @@ class Database:
         # 获取物品
         cursor.execute("SELECT data FROM items")
         for row in cursor.fetchall():
-            result["items"].append(self._json_loads(row["data"]))
+            item_data = self._json_loads(row["data"])
+            item_id = item_data.get("id", "")
+            if item_id:
+                placement = self._get_item_placement(item_id)
+                if placement:
+                    item_data["placement"] = placement
+            result["items"].append(item_data)
         
         return result
 
@@ -217,15 +212,12 @@ class Database:
         """, (character_id,))
         row = cursor.fetchone()
         
-        if not row:
-            return {}
-        
-        status = {}
-        if row["location_id"]:
+        status = {"stats": {}}
+        if row and row["location_id"]:
             status["location_id"] = row["location_id"]
-        if row["state"]:
+        if row and row["state"]:
             status["state"] = row["state"]
-        if row["stats"]:
+        if row and row["stats"]:
             status["stats"] = self._json_loads(row["stats"])
         
         # 获取背包物品
@@ -234,10 +226,27 @@ class Database:
             WHERE character_id = ?
         """, (character_id,))
         inventory_ids = [row["item_id"] for row in cursor.fetchall()]
-        if inventory_ids:
-            status["inventory_ids"] = inventory_ids
+        status["inventory_ids"] = inventory_ids
         
         return status
+
+    def _get_item_placement(self, item_id: str) -> Dict[str, Any]:
+        """获取物品当前位置或持有人。"""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT placement_type, location_id, owner_id
+            FROM item_placement
+            WHERE item_id = ?
+        """, (item_id,))
+        row = cursor.fetchone()
+        if not row:
+            return {}
+        placement = {"type": row["placement_type"] or ""}
+        if row["location_id"]:
+            placement["location_id"] = row["location_id"]
+        if row["owner_id"]:
+            placement["owner_id"] = row["owner_id"]
+        return placement
 
     def update(self, updates: Dict[str, Any]):
         """
@@ -246,57 +255,85 @@ class Database:
         Args:
             updates: 更新数据
         """
-        cursor = self.conn.cursor()
-        
-        # 更新主角状态
-        if "protagonist" in updates:
-            prot_updates = updates["protagonist"] or {}
-            if not isinstance(prot_updates, dict):
-                raise ValueError("database_updates.protagonist 必须是对象")
-            # 获取主角ID
-            cursor.execute("SELECT id FROM characters WHERE type = 'protagonist' LIMIT 1")
-            row = cursor.fetchone()
-            if row:
-                char_id = row["id"]
-                
-                # 更新位置
-                if "new_location_id" in prot_updates:
-                    self._update_character_location(char_id, prot_updates["new_location_id"])
-                
-                # 更新背包
-                if "inventory_changes" in prot_updates:
-                    changes = prot_updates["inventory_changes"] or {}
-                    if not isinstance(changes, dict):
-                        raise ValueError("database_updates.protagonist.inventory_changes 必须是对象")
-                    for item_id in changes.get("add", []):
-                        self._add_item_to_inventory(char_id, item_id)
-                    for item_id in changes.get("remove", []):
-                        self._remove_item_from_inventory(char_id, item_id)
-                
-                # 更新属性
-                if "stat_changes" in prot_updates:
-                    stat_changes = prot_updates["stat_changes"] or {}
-                    if not isinstance(stat_changes, dict):
-                        raise ValueError("database_updates.protagonist.stat_changes 必须是对象")
-                    self._update_character_stats(char_id, stat_changes)
-        
-        # 更新其他角色状态
-        if "characters_updates" in updates:
-            char_updates = updates["characters_updates"] or []
-            if not isinstance(char_updates, list):
-                raise ValueError("database_updates.characters_updates 必须是数组")
-            for char_update in char_updates:
-                if not isinstance(char_update, dict):
-                    raise ValueError("database_updates.characters_updates 的每一项都必须是对象")
-                char_id = char_update["id"]
-                
-                if "new_status" in char_update:
-                    self._update_character_state(char_id, char_update["new_status"])
-                
-                if "new_location_id" in char_update:
-                    self._update_character_location(char_id, char_update["new_location_id"])
-        
-        self.conn.commit()
+        with self.conn:
+            cursor = self.conn.cursor()
+            
+            # 更新主角状态
+            if "protagonist" in updates:
+                prot_updates = updates["protagonist"] or {}
+                if not isinstance(prot_updates, dict):
+                    raise ValueError("database_updates.protagonist 必须是对象")
+                # 获取主角ID
+                cursor.execute("SELECT id FROM characters WHERE type = 'protagonist' LIMIT 1")
+                row = cursor.fetchone()
+                if row:
+                    self._apply_character_delta(row["id"], prot_updates, "database_updates.protagonist")
+            
+            # 更新其他角色状态
+            if "characters_updates" in updates:
+                char_updates = updates["characters_updates"] or []
+                if not isinstance(char_updates, list):
+                    raise ValueError("database_updates.characters_updates 必须是数组")
+                for char_update in char_updates:
+                    if not isinstance(char_update, dict):
+                        raise ValueError("database_updates.characters_updates 的每一项都必须是对象")
+                    char_id = char_update["id"]
+
+                    self._apply_character_delta(char_id, char_update, "database_updates.characters_updates")
+
+            # 更新物品位置或完整数据补丁
+            if "items_updates" in updates:
+                item_updates = updates["items_updates"] or []
+                if not isinstance(item_updates, list):
+                    raise ValueError("database_updates.items_updates 必须是数组")
+                for item_update in item_updates:
+                    if not isinstance(item_update, dict):
+                        raise ValueError("database_updates.items_updates 的每一项都必须是对象")
+                    self._apply_item_delta(item_update)
+
+    def _apply_character_delta(self, character_id: str, updates: Dict[str, Any], path: str):
+        if "new_status" in updates:
+            self._update_character_state(character_id, updates["new_status"])
+
+        if "new_location_id" in updates:
+            self._update_character_location(character_id, updates["new_location_id"])
+
+        if "inventory_changes" in updates:
+            changes = updates["inventory_changes"] or {}
+            if not isinstance(changes, dict):
+                raise ValueError(f"{path}.inventory_changes 必须是对象")
+            for item_id in changes.get("add", []):
+                self._add_item_to_inventory(character_id, item_id)
+            for item_id in changes.get("remove", []):
+                self._remove_item_from_inventory(character_id, item_id)
+
+        if "stat_changes" in updates:
+            stat_changes = updates["stat_changes"] or {}
+            if not isinstance(stat_changes, dict):
+                raise ValueError(f"{path}.stat_changes 必须是对象")
+            self._update_character_stats(character_id, stat_changes)
+
+    def _apply_item_delta(self, item_update: Dict[str, Any]):
+        item_id = item_update.get("id", "")
+        if not item_id:
+            raise ValueError("database_updates.items_updates 的每一项都必须包含 id")
+
+        placement_type = item_update.get("placement_type") or None
+        owner_id = item_update.get("new_owner_id") or None
+        location_id = item_update.get("new_location_id") or None
+        if placement_type or owner_id is not None or location_id is not None:
+            self._update_item_placement(
+                item_id,
+                placement_type=placement_type,
+                owner_id=owner_id,
+                location_id=location_id,
+            )
+
+        data_updates = item_update.get("data_updates")
+        if data_updates is not None:
+            if not isinstance(data_updates, dict):
+                raise ValueError("database_updates.items_updates.data_updates 必须是对象")
+            self._update_item_data(item_id, data_updates)
 
     def _update_character_location(self, character_id: str, location_id: str):
         """更新角色位置"""
@@ -387,13 +424,60 @@ class Database:
             INSERT OR REPLACE INTO character_inventory (character_id, item_id, quantity)
             VALUES (?, ?, COALESCE((SELECT quantity FROM character_inventory WHERE character_id = ? AND item_id = ?), 0) + 1)
         """, (character_id, item_id, character_id, item_id))
+        cursor.execute("""
+            INSERT OR REPLACE INTO item_placement (item_id, placement_type, location_id, owner_id)
+            VALUES (?, 'inventory_item', NULL, ?)
+        """, (item_id, character_id))
 
     def _remove_item_from_inventory(self, character_id: str, item_id: str):
         """从角色背包移除物品"""
         cursor = self.conn.cursor()
         cursor.execute("DELETE FROM character_inventory WHERE character_id = ? AND item_id = ?", (character_id, item_id))
+        cursor.execute("DELETE FROM item_placement WHERE item_id = ? AND owner_id = ?", (item_id, character_id))
+
+    def _update_item_placement(
+        self,
+        item_id: str,
+        *,
+        placement_type: str | None = None,
+        owner_id: str | None = None,
+        location_id: str | None = None,
+    ):
+        """更新物品位置或持有人。"""
+        cursor = self.conn.cursor()
+        resolved_type = placement_type or ("inventory_item" if owner_id else "world_object")
+        cursor.execute("DELETE FROM character_inventory WHERE item_id = ?", (item_id,))
+        cursor.execute("""
+            INSERT OR REPLACE INTO item_placement (item_id, placement_type, location_id, owner_id)
+            VALUES (?, ?, ?, ?)
+        """, (item_id, resolved_type, location_id, owner_id))
+        if owner_id:
+            cursor.execute("""
+                INSERT OR IGNORE INTO character_inventory (character_id, item_id, quantity)
+                VALUES (?, ?, 1)
+            """, (owner_id, item_id))
+
+    def _update_item_data(self, item_id: str, data_updates: Dict[str, Any]):
+        """合并更新物品完整 JSON 数据。"""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT data FROM items WHERE id = ?", (item_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise ValueError(f"物品不存在，无法更新: {item_id}")
+        data = self._json_loads(row["data"])
+        data.update(data_updates)
+        cursor.execute("""
+            UPDATE items
+            SET data = ?
+            WHERE id = ?
+        """, (self._json_dumps(data), item_id))
 
     def merge_element_data(self, element_data: Dict[str, Any]):
+        """事务性合并元素设计师生成的数据。"""
+        with self.conn:
+            self._merge_element_data_uncommitted(element_data)
+
+    def _merge_element_data_uncommitted(self, element_data: Dict[str, Any]):
         """
         合并元素设计师生成的数据
         
@@ -401,6 +485,7 @@ class Database:
             element_data: 包含 protagonist, supporting_characters, villains, locations, items 的字典
         """
         cursor = self.conn.cursor()
+        pending_statuses: list[tuple[str, Dict[str, Any]]] = []
         
         # 合并主角
         if "protagonist" in element_data:
@@ -408,14 +493,18 @@ class Database:
             char_id = prot.get("id", "")
             if char_id:
                 cursor.execute("""
-                    INSERT OR REPLACE INTO characters (id, name, type, data, updated_at)
+                    INSERT INTO characters (id, name, type, data, updated_at)
                     VALUES (?, ?, 'protagonist', ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(id) DO UPDATE SET
+                        name = excluded.name,
+                        type = excluded.type,
+                        data = excluded.data,
+                        updated_at = CURRENT_TIMESTAMP
                 """, (char_id, prot.get("name", ""), self._json_dumps(prot)))
                 
                 # 更新状态
                 if "current_status" in prot:
-                    status = prot["current_status"]
-                    self._update_character_from_status(char_id, status)
+                    pending_statuses.append((char_id, prot["current_status"]))
         
         # 合并配角
         if "supporting_characters" in element_data:
@@ -423,13 +512,17 @@ class Database:
                 char_id = char.get("id", "")
                 if char_id:
                     cursor.execute("""
-                        INSERT OR REPLACE INTO characters (id, name, type, data, updated_at)
+                        INSERT INTO characters (id, name, type, data, updated_at)
                         VALUES (?, ?, 'supporting', ?, CURRENT_TIMESTAMP)
+                        ON CONFLICT(id) DO UPDATE SET
+                            name = excluded.name,
+                            type = excluded.type,
+                            data = excluded.data,
+                            updated_at = CURRENT_TIMESTAMP
                     """, (char_id, char.get("name", ""), self._json_dumps(char)))
                     
                     if "current_status" in char:
-                        status = char["current_status"]
-                        self._update_character_from_status(char_id, status)
+                        pending_statuses.append((char_id, char["current_status"]))
         
         # 合并反派
         if "villains" in element_data:
@@ -437,13 +530,17 @@ class Database:
                 char_id = char.get("id", "")
                 if char_id:
                     cursor.execute("""
-                        INSERT OR REPLACE INTO characters (id, name, type, data, updated_at)
+                        INSERT INTO characters (id, name, type, data, updated_at)
                         VALUES (?, ?, 'villain', ?, CURRENT_TIMESTAMP)
+                        ON CONFLICT(id) DO UPDATE SET
+                            name = excluded.name,
+                            type = excluded.type,
+                            data = excluded.data,
+                            updated_at = CURRENT_TIMESTAMP
                     """, (char_id, char.get("name", ""), self._json_dumps(char)))
                     
                     if "current_status" in char:
-                        status = char["current_status"]
-                        self._update_character_from_status(char_id, status)
+                        pending_statuses.append((char_id, char["current_status"]))
         
         # 合并地点
         if "locations" in element_data:
@@ -451,8 +548,13 @@ class Database:
                 loc_id = loc.get("id", "")
                 if loc_id:
                     cursor.execute("""
-                        INSERT OR REPLACE INTO locations (id, name, type, description, data)
+                        INSERT INTO locations (id, name, type, description, data)
                         VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            name = excluded.name,
+                            type = excluded.type,
+                            description = excluded.description,
+                            data = excluded.data
                     """, (
                         loc_id,
                         loc.get("name", ""),
@@ -467,8 +569,14 @@ class Database:
                 item_id = item.get("id", "")
                 if item_id:
                     cursor.execute("""
-                        INSERT OR REPLACE INTO items (id, name, type, rarity, effect_description, data)
+                        INSERT INTO items (id, name, type, rarity, effect_description, data)
                         VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            name = excluded.name,
+                            type = excluded.type,
+                            rarity = excluded.rarity,
+                            effect_description = excluded.effect_description,
+                            data = excluded.data
                     """, (
                         item_id,
                         item.get("name", ""),
@@ -481,17 +589,15 @@ class Database:
                     # 处理物品放置
                     if "placement" in item:
                         placement = item["placement"]
-                        cursor.execute("""
-                            INSERT OR REPLACE INTO item_placement (item_id, placement_type, location_id, owner_id)
-                            VALUES (?, ?, ?, ?)
-                        """, (
+                        self._update_item_placement(
                             item_id,
-                            placement.get("type", ""),
-                            placement.get("location_id"),
-                            placement.get("owner_id")
-                        ))
-        
-        self.conn.commit()
+                            placement_type=placement.get("type"),
+                            location_id=placement.get("location_id"),
+                            owner_id=placement.get("owner_id"),
+                        )
+
+        for char_id, status in pending_statuses:
+            self._update_character_from_status(char_id, status)
 
     def _update_character_from_status(self, character_id: str, status: Dict[str, Any]):
         """从状态字典更新角色状态"""
@@ -569,8 +675,6 @@ class Database:
 
             return results
 
-        # 否则仅删除各表中的数据
-        cursor = self.conn.cursor()
         tables = [
             "character_inventory",
             "character_relations",
@@ -581,17 +685,18 @@ class Database:
             "characters",
         ]
 
-        for t in tables:
-            try:
-                cursor.execute(f"DELETE FROM {t}")
-                results[t] = "cleared"
-            except Exception as e:
-                results[t] = f"error: {e}"
+        try:
+            with self.conn:
+                cursor = self.conn.cursor()
+                for t in tables:
+                    cursor.execute(f"DELETE FROM {t}")
+                    results[t] = "cleared"
+        except Exception as e:
+            results["error"] = str(e)
+            raise RuntimeError(f"清空数据库失败，已回滚: {e}") from e
 
         try:
-            self.conn.commit()
-            # 回收空间
-            cursor.execute("VACUUM")
+            self.conn.execute("VACUUM")
             results["vacuum"] = "ok"
         except Exception as e:
             results["vacuum"] = f"error: {e}"

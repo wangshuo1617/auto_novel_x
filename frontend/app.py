@@ -15,16 +15,20 @@ from config import GEMINI_API_KEY
 from frontend.services import (
     create_book_with_initialization,
     create_prompt_preset_copy,
-    database_state_text,
+    get_book_health_report,
+    get_database_table,
     get_book_view,
+    get_generation_state_history,
+    get_llm_run_log_history,
     get_prompt_preset_detail,
     list_books,
+    list_database_tables,
     list_prompt_preset_summaries,
     matching_lore_for_chapter,
     read_artifact_text,
-    replace_database_state,
     run_book_action,
     save_artifact_text,
+    save_database_table,
     save_prompt_template_config,
     update_book_prompt_preset,
     update_prompt_preset_info,
@@ -79,7 +83,7 @@ def main() -> None:
     )
     _render_last_action()
 
-    tabs = st.tabs(["总览", "生成控制", "章节阅读", "产物编辑", "数据库", "Prompt 配置"])
+    tabs = st.tabs(["总览", "生成控制", "章节阅读", "产物编辑", "数据库", "健康检查/日志", "Prompt 配置"])
     with tabs[0]:
         _render_overview(book_view)
     with tabs[1]:
@@ -96,6 +100,8 @@ def main() -> None:
     with tabs[4]:
         _render_database_tab(selected_book_path, book_view)
     with tabs[5]:
+        _render_health_and_logs_tab(selected_book_path)
+    with tabs[6]:
         _render_prompt_binding_tab(selected_book_path, book_view, prompt_presets)
 
 
@@ -304,6 +310,8 @@ def _render_artifact_editor(book_path: str, book_view: dict) -> None:
         format_func=lambda value: labels[value],
         key="artifact-editor-select",
     )
+    if selected_artifact == "element_data.json":
+        st.warning("element_data.json 是旧版元素快照，当前角色/地点/物品以数据库 tab 中的 database.db 状态为准。")
     artifact_content = read_artifact_text(book_path, selected_artifact)
 
     with st.form("artifact-editor-form"):
@@ -351,28 +359,140 @@ def _render_database_tab(book_path: str, book_view: dict) -> None:
     col3.metric("反派", len(db_state.get("villains", [])))
     col4.metric("地点 / 物品", f"{len(db_state.get('locations', []))} / {len(db_state.get('items', []))}")
 
-    overview_left, overview_right = st.columns([1, 1])
-    with overview_left:
-        st.markdown("#### 主角")
+    with st.expander("主角状态预览", expanded=True):
         st.json(protagonist or {"message": "暂无数据"})
-    with overview_right:
-        st.markdown("#### 全量状态 JSON")
-        current_state_text = database_state_text(book_path)
-        with st.form("database-editor-form"):
-            edited_state = st.text_area("数据库快照", value=current_state_text, height=520)
-            submitted = st.form_submit_button("用快照重建数据库")
-        if submitted:
-            try:
-                replace_database_state(book_path, edited_state)
-            except Exception as exc:
-                _set_last_action(
-                    kind="error",
-                    message=f"数据库更新失败：{exc}",
-                    logs=traceback.format_exc(),
-                )
-            else:
-                _set_last_action(kind="success", message="数据库已按快照重建。", logs="")
-                st.rerun()
+
+    table_summaries = list_database_tables(book_path)
+    table_options = [item["name"] for item in table_summaries]
+    table_map = {item["name"]: item for item in table_summaries}
+    selected_table = st.selectbox(
+        "选择数据表",
+        options=table_options,
+        format_func=lambda value: f"{table_map[value]['label']} · {value} ({table_map[value]['row_count']} 行)",
+        key="database-table-select",
+    )
+    table_data = get_database_table(book_path, selected_table)
+    st.caption(
+        "主键："
+        + ", ".join(table_data["primary_key"])
+        + ("；JSON 字段：" + ", ".join(table_data["json_columns"]) if table_data["json_columns"] else "")
+    )
+
+    edited_rows = st.data_editor(
+        table_data["rows"],
+        key=f"database-table-editor-{selected_table}",
+        use_container_width=True,
+        hide_index=True,
+        num_rows="dynamic",
+        disabled=table_data["readonly_columns"],
+        column_config=_database_column_config(table_data),
+    )
+
+    col_save, col_reset = st.columns([1, 1])
+    if col_save.button("保存表格变更", key=f"database-save-{selected_table}", type="primary", use_container_width=True):
+        try:
+            rows = _records_from_editor(edited_rows)
+            result = save_database_table(book_path, selected_table, rows)
+        except Exception as exc:
+            _set_last_action(
+                kind="error",
+                message=f"数据库表保存失败：{exc}",
+                logs=traceback.format_exc(),
+            )
+        else:
+            _set_last_action(
+                kind="success",
+                message=f"已保存 {table_data['label']}：{result['saved_rows']} 行，删除 {result['deleted_rows']} 行。",
+                logs="",
+            )
+            st.rerun()
+    if col_reset.button("放弃未保存修改", key=f"database-reset-{selected_table}", use_container_width=True):
+        st.rerun()
+
+    with st.expander("全量运行态预览（只读）", expanded=False):
+        st.json(db_state)
+
+
+def _render_health_and_logs_tab(book_path: str) -> None:
+    st.markdown("### 健康检查")
+    report = get_book_health_report(book_path)
+    summary = report["summary"]
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("状态", report["status"])
+    col2.metric("错误", summary.get("error", 0))
+    col3.metric("警告", summary.get("warning", 0))
+    col4.metric("章节 / Lore", f"{summary.get('chapters', 0)} / {summary.get('lore_records', 0)}")
+
+    if report["issues"]:
+        st.dataframe(
+            [
+                {
+                    "severity": item["severity"],
+                    "code": item["code"],
+                    "message": item["message"],
+                    "detail": json.dumps(item.get("detail"), ensure_ascii=False) if item.get("detail") is not None else "",
+                }
+                for item in report["issues"]
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.success("当前未发现产物/数据库一致性问题。")
+
+    st.markdown("### 章节生成状态")
+    states = get_generation_state_history(book_path, limit=20)
+    if states:
+        selected_state = st.selectbox(
+            "选择生成状态记录",
+            options=list(range(len(states))),
+            format_func=lambda index: f"{states[index].get('status', '')} · {states[index].get('run_id', states[index].get('path', ''))}",
+            key="generation-state-select",
+        )
+        st.json(states[selected_state])
+    else:
+        st.info("暂无章节生成状态记录。")
+
+    st.markdown("### LLM 调用日志")
+    logs = get_llm_run_log_history(book_path, limit=20)
+    if logs:
+        selected_log = st.selectbox(
+            "选择 LLM 调用日志",
+            options=list(range(len(logs))),
+            format_func=lambda index: (
+                f"{logs[index].get('status', '')} · "
+                f"{logs[index].get('operation', '')} · "
+                f"{logs[index].get('caller', {}).get('function', '')} · "
+                f"{logs[index].get('duration_ms', 0)}ms"
+            ),
+            key="llm-log-select",
+        )
+        log_detail = logs[selected_log]["detail"]
+        st.caption(logs[selected_log]["path"])
+        st.json(log_detail)
+    else:
+        st.info("暂无 LLM 调用日志。生成/初始化时会自动记录。")
+
+
+def _database_column_config(table_data: dict[str, Any]) -> dict[str, Any]:
+    config: dict[str, Any] = {}
+    for column in table_data["primary_key"]:
+        config[column] = st.column_config.TextColumn(column, help="主键字段，不能为空")
+    for column in table_data["json_columns"]:
+        config[column] = st.column_config.TextColumn(column, help="请输入合法 JSON", width="large")
+    for column in table_data["integer_columns"]:
+        config[column] = st.column_config.NumberColumn(column, step=1, format="%d")
+    for column in table_data["readonly_columns"]:
+        config[column] = st.column_config.TextColumn(column)
+    return config
+
+
+def _records_from_editor(value: Any) -> list[dict[str, Any]]:
+    if hasattr(value, "to_dict"):
+        return value.to_dict("records")
+    if isinstance(value, list):
+        return [dict(item) for item in value if isinstance(item, dict)]
+    return []
 
 
 def _render_prompt_binding_tab(book_path: str, book_view: dict, prompt_presets: list[dict[str, Any]]) -> None:
@@ -488,12 +608,27 @@ def _render_prompt_editor(book_path: str | None, book_view: dict | None, prompt_
 
     templates = preset_detail["templates"]
     template_names = list(templates.keys())
+    if not template_names:
+        st.error("当前 Prompt 预设没有加载到 Agent Prompt 模板。")
+        st.json(
+            {
+                "selected_preset_id": selected_preset_id,
+                "preset_detail_keys": list(preset_detail.keys()),
+                "preset_meta": preset_meta,
+            }
+        )
+        return
+
+    st.caption(f"当前预设：{selected_preset_id}；可编辑模板数：{len(template_names)}")
+
     selected_template_name = st.selectbox(
         "选择 Agent Prompt",
         options=template_names,
         format_func=_format_template_name,
-        key="prompt-template-select",
+        key=f"prompt-template-select-{selected_preset_id}",
     )
+    if selected_template_name not in templates:
+        selected_template_name = template_names[0]
     template_config = templates[selected_template_name]
 
     st.caption("支持直接编辑 system/user prompt 文本，以及对应的 json schema。保存后，新绑定该预设的书籍会使用新版本。")
@@ -507,6 +642,7 @@ def _render_prompt_editor(book_path: str | None, book_view: dict | None, prompt_
                     label,
                     value=json.dumps(field_value, ensure_ascii=False, indent=2),
                     height=320,
+                    key=f"prompt-field-{selected_preset_id}-{selected_template_name}-{field_name}",
                 )
                 edited_config[field_name] = edited_text
             else:
@@ -514,6 +650,7 @@ def _render_prompt_editor(book_path: str | None, book_view: dict | None, prompt_
                     label,
                     value=str(field_value),
                     height=220,
+                    key=f"prompt-field-{selected_preset_id}-{selected_template_name}-{field_name}",
                 )
                 edited_config[field_name] = edited_text
 

@@ -6,7 +6,6 @@
 import json
 
 from agents import ArcDirector, ElementDesigner, WorldArchitect
-from utils.structured_response import extract_response_object
 from workflows.review_utils import is_review_passed, run_reader_review
 
 
@@ -90,8 +89,10 @@ def _run_element_designer(loop) -> None:
     element_data = {}
     for attempt in range(3):
         element_designer = ElementDesigner(loop.get_novel_setting())
-        element_result = element_designer.run(mode="inital", review_feedback=feedback_text)
-        element_data = extract_response_object(element_result, ("element_data",))
+        element_result = element_designer.run(mode="initial", review_feedback=feedback_text)
+        if not isinstance(element_result, dict):
+            raise ValueError("ElementDesigner 必须返回 JSON 对象")
+        element_data = element_result
         review_data = run_reader_review(
             review_stage="element_design",
             content_to_review=element_data,
@@ -109,11 +110,8 @@ def _run_element_designer(loop) -> None:
     else:
         raise RuntimeError(f"元素设计审核未通过：{review_data.get('review_summary', '无反馈')}")
 
-    element_file = loop.book_dir / "element_data.json"
-    with open(element_file, "w", encoding="utf-8") as f:
-        json.dump(element_data, f, ensure_ascii=False, indent=2)
     loop.db.merge_element_data(element_data)
-    print(f"✓ 初始元素数据已保存: {element_file}")
+    print("✓ 初始元素数据已写入数据库")
 
 
 def _run_arc_director_first_volume(loop) -> None:
@@ -130,7 +128,9 @@ def _run_arc_director_first_volume(loop) -> None:
             review_feedback=feedback_text,
         )
         volume_result = arc_director.run()
-        loop.volume_plan = extract_response_object(volume_result, ("output_data",))
+        if not isinstance(volume_result, dict):
+            raise ValueError("ArcDirector 必须返回 JSON 对象")
+        loop.volume_plan = volume_result
         review_data = run_reader_review(
             review_stage="volume_plan",
             content_to_review=loop.volume_plan,

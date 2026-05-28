@@ -4,7 +4,6 @@ import json
 from typing import Any
 
 from agents import SimulatedReader
-from utils.structured_response import extract_response_object
 
 
 def run_reader_review(
@@ -24,12 +23,14 @@ def run_reader_review(
         evaluation_focus=evaluation_focus,
     )
     review_result = reader.run()
-    return extract_response_object(review_result, ("output_data",)) or review_result or {}
+    if not isinstance(review_result, dict):
+        raise ValueError("SimulatedReader 必须返回 JSON 对象")
+    return review_result
 
 
 def is_review_passed(review_data: dict[str, Any], min_score: int = 3) -> bool:
     if not isinstance(review_data, dict):
-        return True
+        return False
     decision = str(review_data.get("decision", "PASS")).upper()
     score = review_data.get("score", min_score)
     try:

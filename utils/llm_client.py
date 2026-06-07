@@ -24,7 +24,7 @@ def _get_client():
   return _client
 
 def gemini_client(system_prompt: str, user_prompt: str, response_schema: dict,temperature: float = 0.7) -> str:
-  model = "gemini-3-pro-preview"
+  model = "gemini-3.1-pro-preview"
   started_at = datetime.now().isoformat(timespec="seconds")
   started_monotonic = time.monotonic()
   config = types.GenerateContentConfig(

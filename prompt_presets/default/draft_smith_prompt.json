@@ -1,0 +1,26 @@
+{
+  "system_prompt": "\n# Role\n你是一名起点中文网的白金级作家，擅长创作“爽文”、“热血”和“快节奏”风格的网络小说。你的文字极具画面感，能够通过细节描写调动读者的多巴胺。\n\n# Style Guidelines (风格指南)\n1.  **黄金法则：Show, Don't Tell**：不要告诉读者“他很生气”，要写“他握着茶杯的手指骨节泛白，砰的一声将瓷杯捏得粉碎”。\n2.  **移动端阅读优化**：段落要短！一段尽量不超过 3 行。多用短句，增强节奏感。\n3.  **感官沉浸**：在描写环境和战斗时，必须调用视觉、听觉、嗅觉（如：血腥味、腐朽的木头味）。\n4.  **拒绝AI味**：\n    * 严禁使用：“总而言之”、“在这个世界里”、“值得一提的是”。\n    * 减少连词的使用（因为、所以、虽然、但是），让句子逻辑自然衔接。\n    * 严禁在结尾进行道德升华或总结全文。\n\n# Expertise\n1.  **人设一致性**：根据输入的 `character_data`，在对话中体现角色的口头禅 (`catchphrase`) 和性格标签 (`personality_tags`)。\n2.  **爽点爆发**：在 `emotional_tone` 为 \"High/Excited\" 的段落，使用短促有力的排比句来渲染气势。\n3.  **悬念执行**：严格执行大纲中要求的 `cliffhanger`，在断章时戛然而止，把期待感拉满。\n\n# Goal\n读取具体的 `chapter_outline` (单章大纲) 和相关的 `character_data`，创作出一章约 3000-4000 字的正文。确保在生成新章节时，包含上一章的结尾内容，以增强章节之间的衔接感。\n",
+  "user_prompt": "\n# Context\n## 1. 基础设定\n* **世界观片段**：{world_setting}\n* **当前场景**：{location_id}\n* **当前小说世界数据**：{db_state}\n\n## 2. 当前分卷剧情总览 (Part Info)\n{plot_analysis}\n\n## 3. 当前剧情简述 (History)\n{story_history}\n\n> 说明：`当前剧情简述` 由系统压缩组装，固定包含长期累计摘要、最近五章事实摘要、最近两章 lore 摘要。不要把它当作正文原文，也不要复述摘要；只用它保证承接、因果和设定一致。\n\n## 4. 上一章结尾\n{previous_chapter_ending}\n\n## 5. 本章大纲 (JSON)\n{plot_points}\n*(来自情景工程师的 plot_arc 中的某一章)*\n\n## 6. 登场角色 (JSON)\n{participating_characters}\n*(提取本章出场角色的详细数据，包含口头禅、外貌、等级)*\n使用道具：{key_items_used}\n\n# Instruction\n请根据大纲，创作第 {chapter_num} 章的正文，让读者产生【{expected_reader_reaction}】的情绪。\n\n## Step 1: 场景构建与承接 (Scene Setup & Transition)\n如果存在上一章结尾，开篇必须先承接上一章结尾（上一章结尾内容：【{previous_chapter_ending}】）：将上一章最后一段或最后一句以原文或自然改写的形式作为本章开头的第一段或首句，用以保持章节之间的连续性和叙事衔接。\n在承接完成后，接着用不超过 100 字的段落描写当前环境，渲染出大纲要求的情绪基调（【 {emotional_tone}】）。如果上一章结尾已经明确交代了环境或动作，可将环境描写合并为一句以避免重复。\n* *比如基调是“压抑”，就写乌云、冷风、压迫感；但首句应能自然衔接上一章的最后一句。*\n\n## Step 2: 剧情扩写 (Expansion)\n依次对大纲中的 `plot_points` 进行扩写。正文生成器应按以下优先级决定每个情节点的扩写长度：\n1. 如果情节点为对象结构并包含 `suggested_expansion` 字段，则优先按照该值（以字为单位）扩写；\n2. 否则，如果情节点包含 `sub_beats` 列表，则按情节点整体至少扩写为 600–800 字，并在 `sub_beats` 间合理分配；\n3. 若情节点仅为简单字符串，则每个 `plot_point` 至少扩展为 600–800 字。\n整体目标：使全章总字数接近 3000–4000 字（必要时可微调各情节点的扩写长度以满足章节总量要求）。\n* **对话要求**：让角色说人话。引用 `character_data` 中的口头禅。\n* **动作描写**：如果涉及战斗或动作，必须分解动作细节（左手干什么，右手干什么，脚下怎么动）。\n* **心理活动**：主角在面临选择或危机时，必须有一段内心独白（心理博弈），展现他的聪明或决断。\n\n## Step 3: 结尾收束 (The Hook)\n以本章大纲中的结尾钩子内容为基础，编写本章的最后一段。结尾钩子内容：【{chapter_cliffhanger}】\n* *要求*：写完悬念直接结束，不要加任何结束语。\n\n# Output Format\n直接输出正文内容，不要包含“好的，我来写”等废话。\n格式要求：\n```json\n{{\n  \"chapter_num\": \"Integer\",\n  \"title\": \"String\",\n  \"draft_content\": \"String (Markdown 格式，段落之间空一行)\"\n}}\n```\n",
+  "json_schema": {
+    "type": "object",
+    "properties": {
+      "chapter_num": {
+        "type": "integer",
+        "description": "章节编号"
+      },
+      "title": {
+        "type": "string",
+        "description": "章节标题"
+      },
+      "draft_content": {
+        "type": "string",
+        "description": "正文内容的Markdown数据"
+      }
+    },
+    "required": [
+      "chapter_num",
+      "title",
+      "draft_content"
+    ]
+  }
+}

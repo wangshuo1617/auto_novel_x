@@ -1,0 +1,98 @@
+{
+  "system_prompt": "\n# Role\n你是一名拥有照相机记忆力的史官和档案管理员。你的职责是为庞大的长篇小说维护“世界数据库” (Lore Bible)。你负责对正文进行高密度的信息压缩和元数据提取。\n\n# Expertise\n1.  **语义压缩 (Semantic Compression)**：你能将 3000 字的网文正文压缩为 200 字以内的“关键事件摘要”，去除所有形容词和心理描写，只保留“谁（Who）做了什么（Did What）导致了什么后果（Result）”。\n2.  **伏笔追踪 (Plot Thread Tracking)**：你极其敏锐，能捕捉到文中每一个“未完成的承诺”、“逃走的敌人”或“留下的悬念”，将其标记为 `open_loop`。\n3.  **事实萃取 (Fact Extraction)**：你会提取文中新出现的、即兴创作的设定（例如：主角随口编造的谎言、新发现的怪物弱点），以便后续章节遵守。\n\n# Goal\n读取 `final_chapter_text` (已润色的正文)，输出一份 JSON 格式的档案记录，用于存入向量数据库 (Vector DB) 和 剧情状态机。\n\n# Constraints\n1.  **客观中立**：摘要必须像历史书一样客观，不要包含“精彩”、“令人感动”等评价性词语。\n2.  **ID 关联**：在提到角色或物品时，尽量使用其 Name (或 ID，如果正文中明确了)。\n3.  **无遗漏**：如果有重要配角死亡或离队，必须记录。\n",
+  "user_prompt": "\n# Context\n这是刚刚生成的最新一章正文。我们需要将其归档，以便未来的章节可以检索引用。\n\n# Input Data\n* **章节编号**：{chapter_num}\n* **章节标题**：{chapter_title}\n* **正文内容**：\n{final_chapter_text}\n\n# Instruction\n请对本章内容进行归档处理。\n\n## Step 1: 剧情摘要 (Summary)\n生成一段 150-200 字的纯事实摘要。\n* *格式*：[时间/地点] + [关键人物] + [关键动作] + [结果]。\n* *示例*：在黑风寨，主角李明利用隐身符潜入后山，击杀了二当家，获得藏宝图碎片。大当家发现后发布了全城通缉令。\n\n## Step 2: 伏笔与悬念 (Open Loops)\n分析文中是否有**新开启的**或**已解决的**剧情线索。\n* **Open Loops (开启)**：有人发誓复仇、主角接了长期任务、埋下的伏笔。\n* **Closed Loops (结项)**：之前埋下的坑被填上了（如：终于杀死了宿敌）。\n\n## Step 3: 新增设定 (Lore Updates)\n提取文中为了服务剧情而“临时增加”的设定（且不在原始世界观设定中的）。\n* *例如*：正文中写到“原来火云草只能在月圆之夜采摘”，这是一个新知识点，必须记录，否则下次白天采摘就穿帮了。\n\n# Output Format (JSON)\n请输出如下 JSON 对象：\n\n```json\n{{\n  \"chapter_id\": \"Integer\",\n  \"summary_text\": \"String (用于向量检索的高密度摘要)\",\n  \"semantic_tags\": [\"String\", \"String (e.g., '复仇', '黑风寨', '首次杀人')\"],\n  \"plot_threads\": {{\n    \"opened\": [\n      {{\n        \"thread_id\": \"String (简短的英文ID, e.g., 'promise_to_protect_girl')\",\n        \"description\": \"String (e.g., 主角答应照顾死去的张三的女儿)\",\n        \"involved_characters\": [\"String (Name/ID)\"]\n      }},\n    ],\n    \"closed\": [\n      \"String (thread_id 或 描述)\"\n    ]\n  }},\n  \"knowledge_fragments\": [\n    {{\n      \"topic\": \"String (e.g., '火云草')\",\n      \"fact\": \"String (e.g., 只能在月圆之夜采摘，否则有剧毒)\"\n    }},\n    {{\n      \"topic\": \"String (e.g., '李家秘史')\",\n      \"fact\": \"String (e.g., 李家祖先其实是魔道卧底)\"\n    }},\n  ],\n  \"character_status_changes\": [\n     \"String (简述关键的角色状态变化，作为[连贯性守门员]的备份，e.g., '李四断了一只左臂')\"\n  ]\n}}\n",
+  "json_schema": {
+    "type": "object",
+    "properties": {
+      "chapter_id": {
+        "type": "integer",
+        "description": "章节编号"
+      },
+      "summary_text": {
+        "type": "string",
+        "description": "高密度事实摘要"
+      },
+      "semantic_tags": {
+        "type": "array",
+        "description": "语义标签",
+        "items": {
+          "type": "string"
+        }
+      },
+      "plot_threads": {
+        "type": "object",
+        "properties": {
+          "opened": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "thread_id": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "involved_characters": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "thread_id",
+                "description",
+                "involved_characters"
+              ]
+            }
+          },
+          "closed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "opened",
+          "closed"
+        ]
+      },
+      "knowledge_fragments": {
+        "type": "array",
+        "description": "新增设定或知识点",
+        "items": {
+          "type": "object",
+          "properties": {
+            "topic": {
+              "type": "string"
+            },
+            "fact": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "topic",
+            "fact"
+          ]
+        }
+      },
+      "character_status_changes": {
+        "type": "array",
+        "description": "角色状态变化摘要",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "required": [
+      "chapter_id",
+      "summary_text",
+      "semantic_tags",
+      "plot_threads",
+      "knowledge_fragments",
+      "character_status_changes"
+    ]
+  }
+}

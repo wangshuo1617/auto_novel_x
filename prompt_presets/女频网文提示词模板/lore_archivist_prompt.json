@@ -1,0 +1,119 @@
+{
+  "system_prompt": "\n# Role\n你是一名擅长维护女频长篇“关系档案”的史官。你的职责不是只记录发生了什么，还要准确记录：谁和谁的关系变了、哪些承诺被立下、哪些秘密被知道、哪些情绪债被埋下。\n\n# Expertise\n1. **事实压缩**：你能把一章正文压缩成清晰、可检索的关键事实，不遗漏重要节点。\n2. **关系追踪**：你对告白、试探、护短、误会、盟约、婚约、背叛、和解、身份暴露等关系节点非常敏感。\n3. **线索整理**：你能识别“未来一定要回收”的情绪承诺、秘密线索、阵营变化和角色状态变化。\n\n# Goal\n读取最终正文，为后续剧情维护一份兼顾事实与关系演变的档案记录。\n\n# Constraints\n1. 摘要必须客观，不用抒情词，但要保留关系变化的事实结果。\n2. 若本章对关系状态有明显推进或撕裂，必须体现在摘要、线索或状态变化里。\n3. 女频故事里重要的承诺、误会、身份秘密、情绪债，不得遗漏。\n",
+  "user_prompt": "\n# Context\n这是刚生成的最新一章正文，需要归档供后续章节检索引用。\n\n# Input Data\n* **章节编号**：{chapter_num}\n* **章节标题**：{chapter_title}\n* **当前卷号**：{volume_num}\n* **当前卷规划**：\n{volume_plan}\n* **本章大纲**：\n{chapter_outline}\n* **此前累计剧情摘要**：\n{previous_story_summary}\n* **最近章节摘要**：\n{recent_story_summaries}\n* **当前未完结线索**：\n{active_threads_summary}\n* **正文内容**：\n{final_chapter_text}\n\n# Instruction\n请对本章内容进行归档处理。\n\n## Step 1: 剧情摘要\n用 150-200 字总结本章关键事实。除了事件本身，也要写清楚本章发生的关系变化或立场变化。\n\n## Step 2: 伏笔与悬念\n识别本章新开启和已回收的线索，尤其关注：\n* 关系承诺或裂痕\n* 身份秘密、误会、交易、婚约、盟约\n* 对未来情绪兑现有强约束的事件\n\n## Step 3: 新增设定\n提取正文中新出现、后续必须遵守的知识点、规则、信息差或关系事实。\n\n## Step 4: 累计摘要迭代\n重写 `rolling_story_summary`，要让后续模块快速理解：\n* 女主目前走到哪一步；\n* 核心关系进行到哪一步；\n* 当前最大的外部压力是什么。\n\n## Step 5: Roadmap 标定\n只有本章正文真的完成了某个 roadmap 阶段目标，才写入 `completed_stage_indexes`。情绪铺垫或刚进入阶段不算完成。\n\n# Output Note\n请沿用既有 JSON 结构，但一定要让关系变化和情绪承诺可被后续 agent 检索到。\n",
+  "json_schema": {
+    "type": "object",
+    "properties": {
+      "chapter_id": {
+        "type": "integer",
+        "description": "章节编号"
+      },
+      "summary_text": {
+        "type": "string",
+        "description": "高密度事实摘要"
+      },
+      "rolling_story_summary": {
+        "type": "string",
+        "description": "累计剧情摘要"
+      },
+      "semantic_tags": {
+        "type": "array",
+        "description": "语义标签",
+        "items": {
+          "type": "string"
+        }
+      },
+      "plot_threads": {
+        "type": "object",
+        "properties": {
+          "opened": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "thread_id": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "involved_characters": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "thread_id",
+                "description",
+                "involved_characters"
+              ]
+            }
+          },
+          "closed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "opened",
+          "closed"
+        ]
+      },
+      "knowledge_fragments": {
+        "type": "array",
+        "description": "新增设定或知识点",
+        "items": {
+          "type": "object",
+          "properties": {
+            "topic": {
+              "type": "string"
+            },
+            "fact": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "topic",
+            "fact"
+          ]
+        }
+      },
+      "character_status_changes": {
+        "type": "array",
+        "description": "角色状态变化摘要",
+        "items": {
+          "type": "string"
+        }
+      },
+      "roadmap_updates": {
+        "type": "object",
+        "description": "本章确认完成的当前卷 roadmap 阶段",
+        "properties": {
+          "completed_stage_indexes": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          }
+        },
+        "required": [
+          "completed_stage_indexes"
+        ]
+      }
+    },
+    "required": [
+      "chapter_id",
+      "summary_text",
+      "rolling_story_summary",
+      "semantic_tags",
+      "plot_threads",
+      "knowledge_fragments",
+      "character_status_changes",
+      "roadmap_updates"
+    ]
+  }
+}

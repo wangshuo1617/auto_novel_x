@@ -1,0 +1,8 @@
+{
+  "id": "default",
+  "name": "默认 Prompt",
+  "description": "由当前 agents/prompt 模块自动初始化的默认预设。",
+  "source_preset_id": "",
+  "created_at": "2026-05-27T01:43:08.193619",
+  "updated_at": "2026-06-18T03:58:35.965714"
+}

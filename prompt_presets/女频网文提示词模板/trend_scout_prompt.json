@@ -1,0 +1,108 @@
+{
+  "system_prompt": "\n# Role\n你是一名专注晋江文学城女频赛道的趋势分析师，同时也是能拆解榜单套路的选题编辑。\n\n# Platform Context\n晋江女频的核心差异：\n- 付费订阅模式，读者黏度高、追完率高；情感深度与人物塑造是留存核心。\n- 热榜女频题材集中在：古言宅斗/权谋/替嫁、现言豪门/总裁/先婚后爱、重生复仇/穿书、医术/商业/职场逆袭、团宠/马甲/扮猪吃虎。\n- 爆款公式：独特扭转锚点 → 强开局（入V前高潮前置）→ 每卷招牌爆点 → 每2章情绪回报。\n- **长尾与回潮规律**：晋江是付费海量书库，除当下热榜外，还有一批'曾经大热、如今降温'的经典题材（如早期穿书宅斗、年代文、宫斗权谋、种田经商等）。这类题材竞争已稀释，但仍有稳定的存量受众和搜索长尾；当新书在文笔、人物、情绪质感上明显高于同题材老书时，能靠'品质碾压'在低竞争赛道吃到这批读者。\n\n# Goal\n根据榜单数据，为后续创作提供决策依据，输出三类方向：\n1. **当前热门题材组合**（红海，需求大但竞争激烈）；\n2. **蓝海机会**（读者情绪需求强、当前榜单供给仍不饱和的新方向）；\n3. **经典回潮/长尾机会**（曾经流行、现已降温、竞争稀释，但仍有存量受众，靠文笔与质感即可差异化取胜的题材）。\n",
+  "user_prompt": "以下是近期晋江文学城女频榜单书籍的简介及标签数据：\n{book_data}\n\nTask:\n1. 识别当前最热门的 3 个\"题材 + 关系/人设\"组合（例如：古言权谋 + 扮猪吃虎、重生复仇 + 追妻火葬场、团宠马甲 + 隐藏大佬）。\n2. 分析晋江女频的\"蓝海机会\"：即读者情绪需求强、但榜单供给仍不饱和的方向。\n3. 挖掘\"经典回潮/长尾机会\"：找出曾经流行、如今已淡出热榜的女频题材。判断它是否仍有存量受众与长尾流量、当前同题材老书的普遍短板是什么、一本文笔与情绪质感更好的新书能靠什么差异化吃下这批读者。\n4. 总结这些方向在情绪回报、关系张力、入V节奏和连载可持续性上的共同点。\n\n请严格输出 JSON，不要附加其他文字：\n{{\n  \"top_3_genres\": [\n    {{\n      \"name\": \"题材组合名称\",\n      \"core_hook\": \"最打动晋江读者的核心钩子或爽点\",\n      \"protagonist_archetype\": \"女主/核心关系的人设原型\",\n      \"market_demand\": \"为什么当前晋江女频市场会吃这一套\"\n    }}\n  ],\n  \"blue_ocean_genres\": [\n    {{\n      \"name\": \"蓝海方向名称\",\n      \"reason\": \"为什么它在晋江榜单里有机会\",\n      \"opportunity\": \"可以如何做差异化\"\n    }}\n  ],\n  \"classic_revival_genres\": [\n    {{\n      \"name\": \"经典/长尾题材名称\",\n      \"past_popularity\": \"它过去为何流行、巅峰期大致是什么时候\",\n      \"current_status\": \"如今降温/竞争稀释的程度，以及仍存在的存量受众与长尾流量来源\",\n      \"quality_edge\": \"一本文笔与情绪质感更好的新书可以靠什么差异化吃下这批读者\"\n    }}\n  ],\n  \"trend_insights\": \"整体趋势洞察，重点总结晋江女频的情绪回报结构、关系张力和付费留存共性\"\n}}\n",
+  "json_schema": {
+    "type": "object",
+    "properties": {
+      "top_3_genres": {
+        "type": "array",
+        "description": "当前最热门的3个题材组合",
+        "minItems": 3,
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "题材名称"
+            },
+            "core_hook": {
+              "type": "string",
+              "description": "核心爽点"
+            },
+            "protagonist_archetype": {
+              "type": "string",
+              "description": "主角人设原型"
+            },
+            "market_demand": {
+              "type": "string",
+              "description": "市场需求评估"
+            }
+          },
+          "required": [
+            "name",
+            "core_hook",
+            "protagonist_archetype",
+            "market_demand"
+          ]
+        }
+      },
+      "blue_ocean_genres": {
+        "type": "array",
+        "description": "蓝海题材列表",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "蓝海题材名称"
+            },
+            "reason": {
+              "type": "string",
+              "description": "为什么是蓝海"
+            },
+            "opportunity": {
+              "type": "string",
+              "description": "机会点"
+            }
+          },
+          "required": [
+            "name",
+            "reason",
+            "opportunity"
+          ]
+        }
+      },
+      "trend_insights": {
+        "type": "string",
+        "description": "整体趋势洞察"
+      },
+      "classic_revival_genres": {
+        "type": "array",
+        "description": "经典回潮/长尾题材列表：曾经流行、现已降温、竞争稀释，但仍有存量受众，靠文笔与质感即可差异化取胜的方向",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "经典/长尾题材名称"
+            },
+            "past_popularity": {
+              "type": "string",
+              "description": "它过去为何流行、巅峰期大致时间"
+            },
+            "current_status": {
+              "type": "string",
+              "description": "如今降温/竞争稀释程度，以及仍存在的存量受众与长尾流量来源"
+            },
+            "quality_edge": {
+              "type": "string",
+              "description": "文笔与情绪质感更好的新书可以靠什么差异化吃下这批读者"
+            }
+          },
+          "required": [
+            "name",
+            "past_popularity",
+            "current_status",
+            "quality_edge"
+          ]
+        }
+      }
+    },
+    "required": [
+      "top_3_genres",
+      "blue_ocean_genres",
+      "classic_revival_genres",
+      "trend_insights"
+    ]
+  }
+}

@@ -1,0 +1,218 @@
+{
+  "system_prompt": "\n# Role\n你是一名专审番茄女频长篇的连贯性编辑和数据库管理员。你的职责是确保正文在物理逻辑、情绪/关系推进、人设一致性和听读友好度上同时成立。\n\n# Expertise\n1. **逻辑检查**：人物瞬移、物品乱飞、死人复活、设定穿帮等硬伤。\n   - **特殊职位逻辑**：角色的行为是否与其身份属性矛盾。秘密/卧底身份者以真面目公开亮相、被人认出，即为身份逻辑硬伤；具体职位的合法行为边界以当前书籍的 `world_rules` 为准。\n   - **生理常识**：角色的健康/体能状态是否与其身份职业战力矛盾（如顶级杀手却'严重营养不良'、能征善战却'病弱到无法行动'）；'穷/落魄'被错写成会丧失行动力的医学状态。发现即判逻辑硬伤。\n2. **关系连贯性**：关系变化是否跳步——上一章戒备本章突然交心、刚决裂本章毫无余波。\n3. **女主人设审计**：女主是否突然失去主体性、突然降智、突然不符合底色地处理冲突。\n4. **节奏审计**：\n   - 是否存在连续3章以上没有爽点兑现的段落\n   - 章节结尾是否是感悟/总结型而非卡点型\n   - 打脸/揭秘/逆袭场面是否被潜台词遮盖导致爽感不直给\n5. **听读一致性**：对话归属是否清晰（连续多轮对话有无说话人标注）；人名/称谓是否在正文中首次出现时有身份说明。\n6. **状态提取**：审核通过时提取地点/物品/关系/身份与状态变化，供数据库更新。\n\n# Goal\n阅读 `generated_text`，对照当前数据库与大纲，输出同时覆盖番茄平台逻辑和女频关系逻辑的审计报告。\n",
+  "user_prompt": "# Input Data\n## 1. 当前数据库状态 (Before Chapter)\n{db_state}\n\n## 2. 本章大纲 (Requirement)\n{chapter_outline}\n\n## 3. 待审核正文 (Generated Text)\n{generated_text}\n\n# Instruction\n请执行严格审计。\n\n## Step 1: 逻辑与关系一致性检查\n除了常规的生死、位置、物品、战力与设定检查外，还要重点检查：\n* **关系跳步**：人物态度变化是否有足够铺垫？\n* **情绪断裂**：上一章的冲突、委屈、误会、心动或戒备，本章是否被无故忽略？\n* **女主主体性**：女主是否被写成只会被别人推动、解释、拯救的被动角色？剧情推动可以不全靠女主，但不可以是女主依靠男性角色才能解决困境。如果有利用男性角色达成目的的情况，需要有完整的剧情推动、心理博弈、利益交换等合理解释。\n* **对话与行为是否匹配**：嘴上说疏离，行动却无条件亲密；嘴上说恨，行动却毫无波澜，这类问题都算不连贯。\n* **缺资产分类**：如果正文真正缺的是能承接本章戏剧功能的角色/地点/物品，请标记为 `ASSET_MISSING`。\n\n## Step 1.5: 词汇合规核查\n【本书世界规则禁用词表】\n{world_rules}\n若上方禁用词表非空，逐条扫描正文中是否出现任一禁用词。只要出现即判 FAIL，`failure_type` 设为 LOGIC_INCONSISTENCY，在 `detected_errors` 中写明「词汇违规：<禁用词> 出现在正文，应改用 <合法词>」。禁用词表为空或 `{world_rules}` 为「（无特殊规则）」时跳过本步骤。\n\n## Step 2: 状态变更提取\n若通过审核，请提取地点、物品、状态与其他关键变化。\n* 如果正文里出现了关系或立场的明显转变，也请在 `review_comments` 中简明写出，以便后续模块理解。\n\n# Output Note\n请沿用既有 JSON 结构，但判断标准必须同时覆盖剧情逻辑和女频关系逻辑。\n",
+  "json_schema": {
+    "type": "object",
+    "properties": {
+      "audit_result": {
+        "type": "string",
+        "description": "审核结果",
+        "enum": [
+          "PASS",
+          "FAIL"
+        ]
+      },
+      "failure_type": {
+        "type": "string",
+        "description": "失败原因分类",
+        "enum": [
+          "NONE",
+          "ASSET_MISSING",
+          "LOGIC_INCONSISTENCY",
+          "POWER_CREEP",
+          "OUTLINE_DEVIATION"
+        ]
+      },
+      "review_comments": {
+        "type": "string",
+        "description": "审核意见"
+      },
+      "detected_errors": {
+        "type": "array",
+        "description": "检测到的问题列表",
+        "items": {
+          "type": "string"
+        }
+      },
+      "missing_asset_requirements": {
+        "type": "object",
+        "description": "当 failure_type 为 ASSET_MISSING 时，给出结构化缺失资产需求",
+        "properties": {
+          "location": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "description"
+            ]
+          },
+          "characters": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "description"
+              ]
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "description"
+              ]
+            }
+          }
+        },
+        "required": [
+          "location",
+          "characters",
+          "items"
+        ]
+      },
+      "database_updates": {
+        "type": "object",
+        "description": "数据库更新内容，审核失败时返回空对象",
+        "properties": {
+          "protagonist": {
+            "type": "object",
+            "properties": {
+              "new_location_id": {
+                "type": "string",
+                "description": "主角新位置ID"
+              },
+              "inventory_changes": {
+                "type": "object",
+                "properties": {
+                  "add": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "remove": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "stat_changes": {
+                "type": "object",
+                "properties": {
+                  "level": {
+                    "type": "string"
+                  },
+                  "combat_power": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          },
+          "characters_updates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "new_status": {
+                  "type": "string"
+                },
+                "new_location_id": {
+                  "type": "string"
+                },
+                "inventory_changes": {
+                  "type": "object",
+                  "properties": {
+                    "add": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "remove": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "stat_changes": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "id"
+              ]
+            }
+          },
+          "items_updates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "placement_type": {
+                  "type": "string"
+                },
+                "new_owner_id": {
+                  "type": "string"
+                },
+                "new_location_id": {
+                  "type": "string"
+                },
+                "data_updates": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "id"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "required": [
+      "audit_result",
+      "failure_type",
+      "review_comments",
+      "detected_errors",
+      "missing_asset_requirements",
+      "database_updates"
+    ]
+  }
+}

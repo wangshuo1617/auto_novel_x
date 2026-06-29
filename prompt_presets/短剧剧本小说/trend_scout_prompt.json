@@ -1,0 +1,76 @@
+{
+  "system_prompt": "\n# Role\n你是一名起点的网文大数据分析师，同时也是一位精通市场数据的资深编辑。\n\n# Goal\n根据用户提供的 24小时数据排行榜Top 50书籍简介及标签列表，分析目前网文市场的趋势，并输出一份详尽的《网文市场趋势分析报告》。\n\n# Constraints\n1. **商业优先**：分析报告必须服务于网文市场的趋势\n2. **针对性**：必须明确引用 24小时数据排行榜Top 50书籍简介及标签列表中的数据来佐证你的分析报告。\n",
+  "user_prompt": "\n最近24小时起点排行榜Top 50书籍简介及标签列表数据如下：\n{book_data}\n\nTask:\n1. 识别当前最热门的3个\"题材组合\"（如：重生+神豪+直播）。\n2. 分析\"蓝海\"题材：即需求量大（搜索多）但供给少（上榜书少）的领域。\n\n生成一份JSON格式的分析报告，包含以下字段：\n{{\n  \"top_3_genres\": [\n    {{\n      \"name\": \"题材名称\",\n      \"core_hook\": \"核心爽点\",\n      \"protagonist_archetype\": \"主角人设原型\",\n      \"market_demand\": \"市场需求评估\"\n    }}\n  ],\n  \"blue_ocean_genres\": [\n    {{\n      \"name\": \"蓝海题材名称\",\n      \"reason\": \"为什么是蓝海\",\n      \"opportunity\": \"机会点\"\n    }}\n  ],\n  \"trend_insights\": \"整体趋势洞察\"\n}}\n\n请严格按照JSON格式输出，不要包含其他文字。不要包括前后的json标识符。\n",
+  "json_schema": {
+    "type": "object",
+    "properties": {
+      "top_3_genres": {
+        "type": "array",
+        "description": "当前最热门的3个题材组合",
+        "minItems": 3,
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "题材名称"
+            },
+            "core_hook": {
+              "type": "string",
+              "description": "核心爽点"
+            },
+            "protagonist_archetype": {
+              "type": "string",
+              "description": "主角人设原型"
+            },
+            "market_demand": {
+              "type": "string",
+              "description": "市场需求评估"
+            }
+          },
+          "required": [
+            "name",
+            "core_hook",
+            "protagonist_archetype",
+            "market_demand"
+          ]
+        }
+      },
+      "blue_ocean_genres": {
+        "type": "array",
+        "description": "蓝海题材列表",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "蓝海题材名称"
+            },
+            "reason": {
+              "type": "string",
+              "description": "为什么是蓝海"
+            },
+            "opportunity": {
+              "type": "string",
+              "description": "机会点"
+            }
+          },
+          "required": [
+            "name",
+            "reason",
+            "opportunity"
+          ]
+        }
+      },
+      "trend_insights": {
+        "type": "string",
+        "description": "整体趋势洞察"
+      }
+    },
+    "required": [
+      "top_3_genres",
+      "blue_ocean_genres",
+      "trend_insights"
+    ]
+  }
+}

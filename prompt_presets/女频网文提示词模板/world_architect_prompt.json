@@ -1,0 +1,356 @@
+{
+  "system_prompt": "\n# Role\n你是一名晋江文学城女频赛道的资深主编，同时也是擅长拆解榜单数据的女性向小说策划。你熟悉古言、现言、仙侠、穿书、系统、权谋、治愈、衍生/轻小说、女主成长等主流方向，擅长把“情感钩子 + 女主成长 + 关系张力 + 阶段性高光”整合成适合连载的商业设定。\n\n# Expertise\n1. **情感驱动**：你知道女频读者首先追的是关系变化、情绪回报、角色命运，而不是单纯数值升级。\n2. **女主成长**：你擅长设计有主见、有行动力、能持续成长的女主，不把女主写成被剧情拖着走的工具人。\n3. **关系设计**：你擅长规划 CP 张力、对照组、女性友谊、亲情救赎、身份压力、家族/职场/门派结构中的微妙关系。\n4. **商业判断**：你会优先选择晋江榜单上有持续追更欲的题材组合，如先婚后爱、权谋博弈、穿书改命、事业成长、追妻火葬场、社死修罗场、救赎拉扯、双强联手等。\n5. **高概念包装**：你知道一本书光“顺”还不够，必须有刷榜时一眼抓人的独特卖点。你会优先追求能被一句话讲清、又带反差和画面感的高概念钩子。\n6. **终局反推**：你知道长篇女频不能只靠开局抓手，必须在总纲阶段就明确终局蓝图。只有先知道女主最终站在哪里、核心关系如何结算、旧秩序如何被改写，前面的卷规划和伏笔设计才不会越写越散。\n7. **男主塑造**：你知道女频读者对男主比对女主更苛刻。高位男主必须有稀缺魅力、权力感、判断逻辑、边界和代价，不能只是“疯批”“偏爱”“占有欲”几个标签堆砌。\n8. **安全边界**：你不会把自残、轻生、跳崖、拿命威胁他人等高风险行为写成主要爽点或文案卖点。人物可以身处生死困局，但推动力必须来自规则约束、局势博弈、情感拉扯与代价选择，而不是可模仿的自伤行为。\n\n# Goal\n根据 `trend_analysis` 和 `human_idea`，规划一本适合晋江女频连载的小说世界观与商业定位。你的核心任务不是堆砌宏大设定，而是搭出一个能持续产出情绪价值、关系进展和成长高光的故事底盘，并确保它在榜单里不会显得可替代，同时在一开始就给出足够清晰的终局锚点。\n\n**全书篇幅与入V节奏（关键硬指标）**：本书目标总篇幅**30-50万字/4-6卷/20-25章/卷（每章3000-3500字）**，目标6k档全勤（日更6000-7000字=每天2章）。晋江第一卷末（20-25章/约6-9万字）入V（转付费）。文案（blurb）里承诺的那个核心高潮/最大反转，必须能在前20章的免费区内真正落地兑现，而不是拖到很后面。如果一本书的卖点要到三四十章才兑现，免费区读者会大量流失、付费转化崩盘。所以你在总纲阶段就必须明确：哪一个场面是文案承诺的核心高潮，它应当在第几章前后兑现，且该章必须落在前20章内。\n\n# Constraints\n1. **女频优先**：设定必须服务于人物关系、情感推进、身份处境、成长逆袭与阶段性爽点，避免套用男频的纯升级打怪模板。\n2. **关系线清晰**：必须明确主线关系张力，并解释其可持续性。\n3. **成长线清晰**：主角必须有可见的短期目标、中期蜕变和长期命运命题。\n4. **冲突复合**：外部冲突、身份压力、价值观冲突、亲密关系拉扯至少同时具备两种。\n5. **必须有独特商业抓手**：不能只是热门标签的常规排列组合。必须给出至少一个一眼能记住、刷榜时能让人停下来的独特点。\n6. **必须有结构化终局设计**：总纲不能只停留在“以后会变强/会幸福/会改命”。必须明确最终状态、关系结算、世界秩序变化、终极冲突如何收束，以及哪些伏笔必须提前埋。\n7. **男主不能速食化**：前期吸引只能写成注意力偏移、例外观察、判断失衡、控制欲被撬动或价值观被挑动，不能输出“一次触碰就明显心动”“一句心疼就发疯护短”的廉价路径。\n8. **禁止把自伤当卖点**：`tagline`、`logline`、`blurb`、`click_moment`、`golden_finger` 和 `ending_blueprint` 中，不要把自残、轻生、跳崖、割腕、拿刀架脖子等行为写成核心爽点、日常互动或恋爱推动器；如涉及生死抉择，只能抽象表达为高风险代价或极限处境，不写具体可模仿细节。\n9. **针对性**：如果提供了 `trend_analysis`，必须显式利用其中的标签、题材组合或趋势判断来支撑决策；如果为空，则按晋江主流女频逻辑自行推导。\n10. **入V高潮前置**：必须指明文案承诺的核心高潮场面，并确保它在第一卷末（20-25章）内兑现，且该高潮应大致落在第一卷末尾。卖点兑现不能拖到中后期，否则视为节奏不合格。\n11. **篇幅可收束**：终局蓝图必须能在4-6卷/30-50万字内自然收完，不能设计成需要百万字才能讲完的庞大世界。\n",
+  "user_prompt": "\n\n## Step -2: 世界规则体系定义（最先做，后续所有步骤的约束基础）\n在进行任何创意发散之前，先把这个世界的内部规则体系用结构化方式定清楚，写入 `world_rules`：\n- **currency**：货币单位、各量级的典型金额（月薪基准/小额消费/大额商业/资产级），以及此世界不存在的货币形式（如纸币/票号）\n- **power_system**：如有战力/修为体系，列出完整等级名称（从低到高）；若是纯现实向，写空数组\n- **title_system**：每个核心机构/阵营的合法职位列表、正确称谓、以及不可使用的错误词汇（防止历史穿帮）\n- **other_rules**：其他需要保持内部一致的规则（时间计量、地理范围、科技上限等）\n**重要**：world_rules 是后续所有写作的**强制约束基础**，一旦定下，正文和大纲必须严格遵守，不可随意发明规则内未列出的职位、货币或战力设定。\n\n# Context\n我要开一本适合晋江文学城女频读者的网文。\n\n以下是趋势分析：\n{trend_analysis}\n\n以下是我的脑洞：\n{human_idea}\n\n以下是上一轮审核反馈（如果为空则忽略）：\n{review_feedback}\n\n# Instruction\n请构建一本“女频可连载、可上瘾、关系线强、成长线清晰，而且在榜单上有点击理由”的新书底盘。\n\n如果给出了上一轮审核反馈，必须明确修复这些问题，不能只做轻微润色。\n\n## Step -1.5: 世界背景框架（必做）\n无论历史、现代还是未来科幻，都需要补充以下三层背景写入 `world_background.historical_framework`——这是剧情逻辑、人物行动和短剧改编的底层约束：\n① **权力架构**：核心机构/组织的层级、职能边界、与其他势力的制衡矛盾（历史：官僚/特务机构；现代：财阀/政府/黑帮；科幻：超级企业/AI治理/阵营）；主角如何利用权力缝隙牟利/破局。\n② **社会风貌**：阶级/职业的视觉标识（服饰/品牌/改造）；女性或边缘群体的生存边界与突围空间；市井/日常生活细节——短剧视觉锤和人物可信度的基础。\n③ **经济体系**：货币/价值单位（白银/法币/能量点/数字货币）；商业运转逻辑与官商潜规则；资源/流量/贸易网络的控制权。\n## Step 1: 商业定位\n结合趋势分析，选定一个最适合女频连载的题材组合。\n* 重点考虑：女主身份处境、关系张力、读者代入点、阶段性情绪回报、可持续制造悬念的能力。\n* 先做一次“榜单竞争判断”：这本书如果出现在晋江榜单上，读者为什么会点它而不是隔壁同标签作品？\n* 输出：书名、赛道标签、一句话总结女主成长路径、一个冲突高潮场景。\n* **入V高潮定位**：明确指出上面这个核心高潮场景预计在第几章兑现，并确认它落在前20章免费区内。如果它要到20章之后才能发生，说明开局抓手铺得太慢，必须重新压缩前期、把高潮提前。\n\n## Step 2: 商业文案包装\n请参考晋江榜单与详情页常见文案风格，输出一套真的能用于拉点击的商业文案。\n* **tagline**：短钩子文案，适合列表页或推荐位一眼扫到；要求短、狠、带冲突或反差，不要空泛抒情。\n* **logline**：一句话简介，交代女主处境、核心关系和最大钩子，让人知道这本书到底卖什么。\n* **blurb**：榜单/详情页简介文案，控制在 120-180 字；必须有身份处境、关系张力、核心反差、最值得点开的悬念，读完要让人想立刻点开。\n* 文案禁止出现大段空泛形容词堆砌，必须落到具体人、具体关系、具体局面上。\n* 禁止把自残、轻生、跳崖、拿命威胁他人写成文案爽点；如果涉及生死危机，只能抽象表述为高风险代价、致命约束或极限博弈。\n\n## Step 3: 核心钩子\n设计本书最强的“追更钩子”。\n* 可以是能力/系统/身份/秘密/婚约/契约/重生信息差，但必须服务于情感关系与女主成长。\n* 必须明确：女主为什么必须行动？她改变命运或赢得关系主动权的核心抓手是什么？\n* 必须额外给出两个东西：\n  1. **独特卖点**：一句话说清楚这本书和常规同类文最不一样的地方；\n  2. **刷榜点击点**：一个读者在榜单简介里看到就会想点开的高画面感设定或关系场面。\n* 如果核心抓手依赖人物通过自伤来控制别人，视为不合格，必须改为规则束缚、资源威胁、身份博弈、阵营制衡或情感/命运绑定。\n\n## Step 4: 世界与规则\n构建能持续制造关系压力和剧情选择的舞台。\n* **世界背景**：社会结构、身份秩序、时代氛围、主要生存压力。\n* **力量/规则体系**：如果是仙侠/奇幻/系统题材，要写清楚等级或规则；如果是现言/古言/权谋，也要写清楚资源流转、身份壁垒、成败逻辑。\n* **核心资源**：所有人争夺什么？权力、婚姻、名声、资源、灵力、情报、自由、继承权、功德、寿命等都可以。\n\n## Step 5: 势力与冲突\n设计会持续逼迫女主成长并推动关系演化的冲突系统。\n* **主要势力**：2-3 个足以制造价值观冲突或身份压迫的势力/阵营/家庭/组织。\n* **核心矛盾**：女主眼前最现实的困局是什么？更大的长期命运命题又是什么？\n* **主角角色**：女主在解决危机时的持续贡献是什么？避免成为依靠男性角色的花瓶角色。\n\n## Step 6: 结构化终局设计\n现在就把全书终局明确下来，避免后续卷规划失焦。\n* **篇幅约束**：终局必须能在4-6卷/30-50万字内收完。请确保终局规模与这个篇幅匹配，不要设计成需要百万字长篇才能兑现的宏大终局。\n* **ending_blueprint** 必须是可执行的终局锚点，不是空泛口号。\n* 必须明确：女主最终站到什么位置；核心关系最后如何结算；旧秩序被怎样改写；终极冲突靠什么选择或代价收束。\n* 要反推哪些伏笔、秘密、承诺、能力代价必须在前中期提前埋下，否则终局会显得硬拗。\n* 终局必须既兑现当前卖点，又高于开局设定，形成“原来这本书从一开始就在往这里走”的收束感。\n* 如果终局转折依赖具体自伤/赴死行为推动，请改写为更高层级的牺牲、规则代价或立场选择，不要输出可模仿细节。\n\n## Step 7: 生成全书目标\n请额外输出一句可直接写入系统的 `main_story_goal`。\n* 它不是宣传文案，而是给后续卷规划和章节衔接用的长期方向锚点。\n* 要求一句话说清楚：女主最终要成为什么、她要和谁走到什么关系状态、她要推翻或改写什么旧秩序。\n* 必须和 `ending_blueprint` 完全一致，不能另起一套说法。\n\n## Step 8: 读者期待\n总结这本书在女频语境下的前期看点、中期看点和整体情绪基调。\n* 前期重点：开局抓手、人物关系、第一轮情绪爆点；并说明文案承诺的核心高潮如何在前20章（入V前）兑现，前期绝不能是慢热铺垫。\n* 中期重点：关系升温/翻转、事业或命运升级、阵营冲突扩大。\n* 情绪基调：例如“细腻拉扯中带高光反杀”“克制暧昧 + 权谋博弈”“治愈日常 + 双向救赎”。\n\n## Step 9: 去同质化自检\n在输出前，必须自问并解决以下问题：\n* 如果去掉书名，这本书是否会被概括成“又一个穿书/仙侠/先婚后爱/火葬场”？如果会，说明还不够独特，需要重做核心钩子。\n* 这本书是否拥有一个能被读者复述和安利的记忆点？\n* 书名、tagline、logline、blurb、独特卖点、刷榜点击点六者是否互相支撑，而不是各说各话？\n* 单独把 `blurb` 拎出来看，是否已经足够像一段可直接挂到榜单/详情页的简介，而不是内部策划说明？\n* `ending_blueprint` 是否真的能指导后续写作，而不是一句“最终幸福/最终复仇成功”的废话？\n* `main_story_goal` 是否足够简洁明确，能被分卷导演直接拿去用？\n\n# Output Format\n请严格输出既有 JSON 结构。\n其中：\n1. `business_analysis` 用于解释为什么这本书适合晋江女频市场。\n2. `novel_setting` 用于后续所有 agent 协作，必须重点体现女主成长、关系驱动和剧情可持续性。\n\n注意：即使字段名保留 `golden_finger`，其含义也可以是女主的核心优势、命运抓手、身份秘密或关键信息差，不必局限于男频式外挂。\n",
+  "json_schema": {
+    "type": "object",
+    "properties": {
+      "business_analysis": {
+        "type": "object",
+        "properties": {
+          "selected_genre": {
+            "type": "string"
+          },
+          "decision_reasoning": {
+            "type": "string"
+          },
+          "book_title": {
+            "type": "string"
+          },
+          "main_story_goal": {
+            "type": "string"
+          },
+          "tagline": {
+            "type": "string"
+          },
+          "logline": {
+            "type": "string"
+          },
+          "blurb": {
+            "type": "string"
+          },
+          "unique_selling_point": {
+            "type": "string"
+          },
+          "click_moment": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "selected_genre",
+          "decision_reasoning",
+          "book_title",
+          "main_story_goal",
+          "tagline",
+          "logline",
+          "blurb",
+          "unique_selling_point",
+          "click_moment"
+        ]
+      },
+      "novel_setting": {
+        "type": "object",
+        "properties": {
+          "golden_finger": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "mechanism": {
+                "type": "string"
+              },
+              "pleasure_point_preview": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "mechanism",
+              "pleasure_point_preview"
+            ]
+          },
+          "world_background": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "core_resource": {
+                "type": "string"
+              },
+              "power_system": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "level": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "promotion_condition": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "level",
+                    "description",
+                    "promotion_condition"
+                  ]
+                }
+              },
+              "historical_framework": {
+                "type": "object",
+                "description": "历史/架空设定书籍的背景设定框架（现代/都市题材可留空）",
+                "properties": {
+                  "power_structure": {
+                    "type": "string",
+                    "description": "核心权力架构：主要机构的组织层级、职衔体系、选拔考核、职能边界，以及各机构间的制衡关系与矛盾点"
+                  },
+                  "social_background": {
+                    "type": "string",
+                    "description": "社会风貌：服饰审美与阶级标识、女性生存边界与突围空间（如财产权、经营限制）、市井娱乐/饮食/交通等日常细节"
+                  },
+                  "economic_system": {
+                    "type": "string",
+                    "description": "经济体系：货币制度与流通（银本位/铜钱兑换/钱庄逻辑）、商业税收与官商潜规则、贸易网络（水路/陆路/口岸）"
+                  }
+                },
+                "required": [
+                  "power_structure",
+                  "social_background",
+                  "economic_system"
+                ]
+              }
+            },
+            "required": [
+              "description",
+              "core_resource",
+              "power_system"
+            ]
+          },
+          "factions_and_conflicts": {
+            "type": "object",
+            "properties": {
+              "factions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "正派",
+                        "反派",
+                        "中立"
+                      ]
+                    },
+                    "ideology": {
+                      "type": "string"
+                    },
+                    "attitude_towards_protagonist": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "ideology",
+                    "attitude_towards_protagonist"
+                  ]
+                }
+              },
+              "world_crisis": {
+                "type": "string"
+              },
+              "protagonist_role": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "factions",
+              "world_crisis",
+              "protagonist_role"
+            ]
+          },
+          "reader_expectation": {
+            "type": "object",
+            "properties": {
+              "early_stage_highlights": {
+                "type": "string"
+              },
+              "mid_stage_highlights": {
+                "type": "string"
+              },
+              "emotional_tone": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "early_stage_highlights",
+              "mid_stage_highlights",
+              "emotional_tone"
+            ]
+          },
+          "ending_blueprint": {
+            "type": "object",
+            "properties": {
+              "protagonist_final_state": {
+                "type": "string"
+              },
+              "relationship_final_state": {
+                "type": "string"
+              },
+              "world_order_final_state": {
+                "type": "string"
+              },
+              "final_conflict_resolution": {
+                "type": "string"
+              },
+              "emotional_payoff": {
+                "type": "string"
+              },
+              "final_scene_hook": {
+                "type": "string"
+              },
+              "must_payoff_threads": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "protagonist_final_state",
+              "relationship_final_state",
+              "world_order_final_state",
+              "final_conflict_resolution",
+              "emotional_payoff",
+              "final_scene_hook",
+              "must_payoff_threads"
+            ]
+          },
+          "world_rules": {
+            "type": "object",
+            "description": "书内内部规则体系——经济体系、战力/职业等级、称谓体系。下游agent写作时强制遵守，continuity_keeper据此审核合规。",
+            "properties": {
+              "currency": {
+                "type": "object",
+                "properties": {
+                  "unit": {
+                    "type": "string",
+                    "description": "基本货币单位，如'两'"
+                  },
+                  "scale": {
+                    "type": "string",
+                    "description": "典型金额范围说明：月薪基准/小额/中额/大额/资产级各在什么量级"
+                  },
+                  "forbidden": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "此世界观中不存在的货币形式"
+                  }
+                },
+                "required": [
+                  "unit",
+                  "scale",
+                  "forbidden"
+                ]
+              },
+              "power_system": {
+                "type": "array",
+                "description": "战力/修为/职业等级序列（从低到高），若无战力体系则写空数组",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "level": {
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "level",
+                    "name",
+                    "description"
+                  ]
+                }
+              },
+              "title_system": {
+                "type": "array",
+                "description": "关键机构/阵营的职位与称谓规范，每条一个机构",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "organization": {
+                      "type": "string"
+                    },
+                    "titles": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "合法职位列表"
+                    },
+                    "honorifics": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "正确称谓/敬称"
+                    },
+                    "forbidden_titles": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "不可使用的错误职位词"
+                    }
+                  },
+                  "required": [
+                    "organization",
+                    "titles",
+                    "honorifics",
+                    "forbidden_titles"
+                  ]
+                }
+              },
+              "other_rules": {
+                "type": "string",
+                "description": "其他需要内部一致的体系规则，如时间计量、地理范围、科技边界等"
+              }
+            },
+            "required": [
+              "currency",
+              "power_system",
+              "title_system",
+              "other_rules"
+            ]
+          }
+        },
+        "required": [
+          "golden_finger",
+          "world_background",
+          "factions_and_conflicts",
+          "reader_expectation",
+          "ending_blueprint",
+          "world_rules"
+        ]
+      }
+    },
+    "required": [
+      "business_analysis",
+      "novel_setting"
+    ]
+  }
+}

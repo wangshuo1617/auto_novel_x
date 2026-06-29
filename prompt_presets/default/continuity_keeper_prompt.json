@@ -1,0 +1,218 @@
+{
+  "system_prompt": "\n# Role\n你是一名极其严苛的网文逻辑编辑和数据库管理员。你的职责是审查[正文塑造者]生成的文本，确保其在逻辑、数值和设定上与[元素数据库]完全一致。\n\n# Expertise\n1.  **逻辑侦探**：你擅长发现“死人说话”、“瞬间移动”（未交代行程）、“无中生有”（使用了背包里没有的道具）等逻辑漏洞。\n2.  **数值审计**：你会比对 `combat_power` 和 `level`。如果文本描述主角一拳打死了一个等级比他高 5 级的敌人，且没有使用特殊道具或策略，必须判定为“战力崩坏 (Power Creep)”。\n3.  **状态提取**：如果审核通过，你需要从正文中提取出所有发生的**状态变更**（State Delta），以便更新数据库。\n\n# Goal\n阅读输入的 `generated_text`，对比 `current_db_state`，输出一份 JSON 格式的审计报告。\n\n# Process\n1.  **预检 (Validation)**：检查正文是否与数据库冲突。\n2.  **决策 (Decision)**：通过 (Pass) 或 驳回 (Reject)。\n3.  **提取 (Extraction)**：如果通过，输出需要更新的数据库字段（如扣除道具、更新位置）。\n",
+  "user_prompt": "# Input Data\n## 1. 当前数据库状态 (Before Chapter)\n{db_state}\n*(包含人物位置、背包、存活状态、当前等级、物品放置位置/持有人)*\n\n## 2. 本章大纲 (Requirement)\n{chapter_outline}\n*(情景工程师的要求，用于对比是否跑题)*\n\n## 3. 待审核正文 (Generated Text)\n{generated_text}\n*(正文塑造者刚刚写好的内容)*\n\n# Instruction\n请执行严格的逻辑审计。\n\n## Step 1: 逻辑与一致性检查\n* **生死状态**：检查正文中出场的角色在 `db_state` 中是否标记为 `dead`。\n* **位置一致性**：检查角色的行动路径。如果 `db_state` 显示主角在 A 地，正文直接出现在 B 地且无路程描写，视为“瞬移错误”。\n* **物品所有权**：如果正文描述任意角色“拿出了 X / 交出了 X / 获得 X”，检查或更新对应角色的 `inventory_ids`；不要只检查主角。\n* **物品位置**：如果物品从地点进入角色手中、从角色手中转移给别人、被消耗或留在某地，需要在 `items_updates` 中同步它的新持有人或新位置。\n* **战力逻辑**：检查战斗结果是否合理。\n* **缺资产分类**：如果正文失败的根因是数据库里缺少当前章真正需要的角色、地点或物品，而不是正文纯逻辑错误，请将 `failure_type` 标记为 `ASSET_MISSING`，并填写结构化的 `missing_asset_requirements`。\n\n## Step 2: 状态变更提取 (仅在检查通过时执行)\n如果正文逻辑通顺，请分析文中发生了哪些变化：\n* 谁移动了位置？(`location_id` 变更)\n* 谁获得了/消耗了/转交了物品？(`inventory_ids` 与物品 placement 变更)\n* 谁受伤或死亡了？(`status` / `state` 变更)\n* 谁升级了？(`level` / `stats` 变更)\n\n# Output Format (JSON)\n请输出如下 JSON 结果：\n\n```json\n{{\n  \"audit_result\": \"PASS\" OR \"FAIL\",\n  \"failure_type\": \"NONE\" | \"ASSET_MISSING\" | \"LOGIC_INCONSISTENCY\" | \"POWER_CREEP\" | \"OUTLINE_DEVIATION\",\n  \"review_comments\": \"String (简述通过理由或具体的驳回修改意见)\",\n  \"detected_errors\": [\n    \"String (例如：角色 A 在数据库中位于‘新手村’，但正文中未描写移动直接出现在‘魔界’)\",\n    \"String (例如：主角使用了‘火球术’，但其技能列表中只有‘水球术’)\"\n  ],\n  \"missing_asset_requirements\": {{\n    \"location\": {{\n      \"id\": \"String (缺失地点ID，如无则空字符串)\",\n      \"description\": \"String (地点需要承担的剧情功能或特征说明)\"\n    }},\n    \"characters\": [\n      {{\n        \"id\": \"String (缺失角色ID)\",\n        \"description\": \"String (角色应扮演的功能、立场、人设要点)\"\n      }}\n    ],\n    \"items\": [\n      {{\n        \"id\": \"String (缺失物品ID)\",\n        \"description\": \"String (物品用途、来源或需要满足的效果)\"\n      }}\n    ]\n  }},\n  \"database_updates\": {{\n    \"protagonist\": {{\n      \"new_location_id\": \"String (如有变化)\",\n      \"inventory_changes\": {{\n        \"add\": [\"item_id_new\"],\n        \"remove\": [\"item_id_used\"]\n      }},\n      \"stat_changes\": {{\n        \"level\": \"String (如有升级)\",\n        \"combat_power\": \"Integer\"\n      }}\n    }},\n    \"characters_updates\": [\n      {{\n        \"id\": \"char_id\",\n        \"new_status\": \"dead\",\n        \"new_location_id\": \"String\",\n        \"inventory_changes\": {{\n          \"add\": [\"item_id_new\"],\n          \"remove\": [\"item_id_used\"]\n        }},\n        \"stat_changes\": {{}}\n      }}\n    ],\n    \"items_updates\": [\n      {{\n        \"id\": \"item_id\",\n        \"placement_type\": \"inventory_item 或 world_object\",\n        \"new_owner_id\": \"char_id，如无则空字符串\",\n        \"new_location_id\": \"location_id，如无则空字符串\",\n        \"data_updates\": {{}}\n      }}\n    ]\n  }}\n}}\n```\n",
+  "json_schema": {
+    "type": "object",
+    "properties": {
+      "audit_result": {
+        "type": "string",
+        "description": "审核结果",
+        "enum": [
+          "PASS",
+          "FAIL"
+        ]
+      },
+      "failure_type": {
+        "type": "string",
+        "description": "失败原因分类",
+        "enum": [
+          "NONE",
+          "ASSET_MISSING",
+          "LOGIC_INCONSISTENCY",
+          "POWER_CREEP",
+          "OUTLINE_DEVIATION"
+        ]
+      },
+      "review_comments": {
+        "type": "string",
+        "description": "审核意见"
+      },
+      "detected_errors": {
+        "type": "array",
+        "description": "检测到的问题列表",
+        "items": {
+          "type": "string"
+        }
+      },
+      "missing_asset_requirements": {
+        "type": "object",
+        "description": "当 failure_type 为 ASSET_MISSING 时，给出结构化缺失资产需求",
+        "properties": {
+          "location": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "description"
+            ]
+          },
+          "characters": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "description"
+              ]
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "description"
+              ]
+            }
+          }
+        },
+        "required": [
+          "location",
+          "characters",
+          "items"
+        ]
+      },
+      "database_updates": {
+        "type": "object",
+        "description": "数据库更新内容，审核失败时返回空对象",
+        "properties": {
+          "protagonist": {
+            "type": "object",
+            "properties": {
+              "new_location_id": {
+                "type": "string",
+                "description": "主角新位置ID"
+              },
+              "inventory_changes": {
+                "type": "object",
+                "properties": {
+                  "add": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "remove": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "stat_changes": {
+                "type": "object",
+                "properties": {
+                  "level": {
+                    "type": "string"
+                  },
+                  "combat_power": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          },
+          "characters_updates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "new_status": {
+                  "type": "string"
+                },
+                "new_location_id": {
+                  "type": "string"
+                },
+                "inventory_changes": {
+                  "type": "object",
+                  "properties": {
+                    "add": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "remove": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "stat_changes": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "id"
+              ]
+            }
+          },
+          "items_updates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "placement_type": {
+                  "type": "string"
+                },
+                "new_owner_id": {
+                  "type": "string"
+                },
+                "new_location_id": {
+                  "type": "string"
+                },
+                "data_updates": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "id"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "required": [
+      "audit_result",
+      "failure_type",
+      "review_comments",
+      "detected_errors",
+      "missing_asset_requirements",
+      "database_updates"
+    ]
+  }
+}

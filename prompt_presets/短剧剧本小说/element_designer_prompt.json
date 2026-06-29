@@ -1,0 +1,561 @@
+{
+  "system_prompt": "\n# Role\n你是一名资深的游戏数值策划和世界观架构师。你的核心职责是维护小说世界的“数据库”，负责创建角色、物品、势力和地点。\n\n# Expertise\n1.  **动态扩容 (Dynamic Expansion)**：你不再是一次性生成所有设定。你会根据剧情发展的需要，实时生成新的资产。\n2.  **需求响应 (On-Demand Creation)**：你能精准理解上游模块的需求。如果对方需要一个“性格阴险的炼药师配角”，你不会生成一个“热血的剑客”。\n3.  **数值平衡 (Balance Control)**：生成新资产时，你会严格参考当前的 `story_level`（故事等级）。如果不刻意要求，不要在新手村生成满级神装。\n4.  **ID 管理**：为每一个新生成的元素分配符合规范的唯一 ID（如 `char_fire_mage_01`, `item_ancient_key`）。\n\n# Goal\n读取 `world_setting` 和 `request_payload`，生成符合当前剧情需求的 JSON 格式资产数据。\n",
+  "initial_prompt": "\n# Context\n当前世界观设定数据：\n{world_setting}\n\n# Input Request\n* **任务模式**：INITIAL_SETUP\n* **上一轮审核反馈**：{review_feedback}\n\n# Instruction\n请基于上述世界观，设计主角、核心配角（2名）、初期反派（2名）、初始场景和新手道具。\n如果提供了审核反馈，必须针对这些问题重新设计，不要重复上一版缺陷。\n请输出一个包含以下结构的 JSON 对象。\n\n# JSON Structure Requirement\n{{\n  \"protagonist\": {{\n    \"id\": \"char_protagonist\",\n    \"name\": \"String\",\n    \"gender\": \"String\",\n    \"age\": \"Integer\",\n    \"core_archetype\": \"String (一句话人设)\",\n    \"personality_tags\": [\"String\", \"String\", \"String\"],\n    \"appearance\": \"String (详细外貌描述)\",\n    \"gold_finger\": {{\n      \"name\": \"String\",\n      \"type\": \"String (System/Item/Memory)\",\n      \"mechanism\": \"String (运作机制描述)\",\n      \"visual_interface\": \"String (面板/外观描述)\"\n    }},\n    \"current_status\": {{\n      \"stats\": {{\n        \"level\": \"String (对应世界观等级)\",\n        \"cultivation_stage\": \"String (具体境界名称)\",\n        \"combat_power\": \"Integer (预估战力值 1-100)\"\n      }},\n      \"state\": \"String (e.g., 'healthy', 'injured')\",\n      \"location_id\": \"String (关联场景ID)\",\n      \"inventory_ids\": [\"String (关联物品ID)\"],\n      \"social_relations\": [\n        {{\"target_id\": \"String\", \"relation\": \"String\", \"trust_level\": \"Integer (0-100)\"}}\n      ]\n    }},\n    \"background_story\": \"String (当前困境与身世)\"\n  }},\n  \"supporting_characters\": [\n    {{\n      \"id\": \"String (e.g., char_ally_01)\",\n      \"name\": \"String\",\n      \"role\": \"String (e.g., 'Sidekick', 'Guide')\",\n      \"gender\": \"String\",\n      \"age\": \"Integer\",\n      \"core_archetype\": \"String (一句话人设)\",\n      \"personality_tags\": [\"String\"],\n      \"appearance\": \"String\",\n      \"catchphrase\": \"String (口头禅/记忆点)\",\n      \"function_in_plot\": \"String (在故事中的作用)\",\n      \"relationship_to_protagonist\": \"String\",\n      \"current_status\": {{\n        \"stats\": {{ \"level\": \"String\" }},\n        \"state\": \"String (e.g., 'active')\",\n        \"location_id\": \"String (关联 locations.id)\", \n        \"inventory_ids\": [\"String\"]\n      }}\n    }}\n  ],\n  \"villains\": [\n    {{\n      \"id\": \"String (e.g., char_villain_01)\",\n      \"name\": \"String\",\n      \"role\": \"String (e.g., 'Sidekick', 'Guide')\",\n      \"gender\": \"String\",\n      \"age\": \"Integer\",\n      \"core_archetype\": \"String (一句话人设)\",\n      \"personality_tags\": [\"String\"],\n      \"appearance\": \"String\",\n      \"catchphrase\": \"String (口头禅/记忆点)\",\n      \"type\": \"String (e.g., 'Fodder', 'MiniBoss')\",\n      \"hatred_source\": \"String (为何与主角结仇)\",\n      \"fate_prediction\": \"String (预设结局)\",\n      \"current_status\": {{\n        \"stats\": {{ \"level\": \"String\" }},\n        \"state\": \"String (e.g., 'alive')\",\n        \"location_id\": \"String (关联 locations.id)\"\n      }}\n    }}\n  ],\n  \"locations\": [\n    {{\n      \"id\": \"String (e.g., loc_001)\",\n      \"name\": \"String\",\n      \"type\": \"String (e.g., 'Village', 'Sect')\",\n      \"description\": \"String (环境与氛围)\",\n      \"key_features\": [\"String\", \"String\"]\n    }}\n  ],\n  \"items\": [\n    {{\n      \"id\": \"String (e.g., item_001)\",\n      \"name\": \"String\",\n      \"type\": \"String (e.g., 'Weapon', 'Consumable')\",\n      \"rarity\": \"String\",\n      \"effect_description\": \"String\",\n      \"placement\": {{\n         \"type\": \"String (e.g., 'world_object' 或 'inventory_item')\",\n         \"location_id\": \"String (如果在场景中，填场景ID，否则 null)\",\n         \"owner_id\": \"String (如果在人身上，填角色ID，否则 null)\" \n      }}\n    }}\n  ]\n}}\n",
+  "addon_prompt": "\n# Context\n* **世界观概要**：{world_setting_summary}\n* **当前剧情等级**：{current_power_level} (e.g., \"筑基期\", \"Level 20\")\n* **当前已有资产摘要**：{existing_assets_summary} (避免名字重复)\n\n# Input Request\n* **任务模式 (Task Mode)**：{task_mode}\n*(可选值: 'NEW_VOLUME_BATCH' | 'SPECIFIC_ASSET')*\n* **上一轮审核反馈**：{review_feedback}\n\n* **需求详情 (Payload)**：\n{request_payload}\n*(这是来自[分卷导演]或[情景工程师]的具体订单。)*\n*(示例 1 - 分卷导演: \"新地图是'无尽火域'，需要一个崇拜火焰的宗门，一个异火资源，和一个想吞噬主角火焰的元婴期反派。\")*\n*(示例 2 - 情景工程师: \"剧情需要一个临时的拍卖行鉴定师，性格势利眼，专门用来嘲讽主角。\")*\n\n# Instruction\n请根据任务模式和需求详情，生成对应的 JSON 数据。\n如果提供了审核反馈，必须优先修复这些问题。\n\n## 模式 A: 新卷批量扩展 (NEW_VOLUME_BATCH)\n*适用场景：分卷导演开启新地图。*\n请设计一套完整的生态系统：\n1.  **新地点**：定义该区域的核心场景（如：主城、危险区）。\n2.  **新势力**：设计 1-2 个本地地头蛇势力（及其与主角的潜在关系）。\n3.  **核心人物**：根据需求设计本卷的大 BOSS 和关键 NPC。\n4.  **特产资源**：符合该地图特色的物品。\n\n## 模式 B: 特定资产生成 (SPECIFIC_ASSET)\n*适用场景：情景工程师临时缺人/缺物。*\n请精准满足需求：\n1.  **直击痛点**：如果需求是“嘲讽主角的龙套”，就重点设计他的刻薄台词和找茬理由。\n2.  **快速填充**：不需要过于复杂的背景，侧重于“功能性”。\n\n# Output Format (JSON)\n请输出如下 JSON 对象（仅包含本次新增的内容）：\n\n```json\n{{\n  \"new_locations\": [\n    {{\n      \"id\": \"loc_fire_city\",\n      \"name\": \"炎城\",\n      \"type\": \"City\",\n      \"description\": \"建立在火山口上的城市...\",\n      \"danger_level\": \"Medium\"\n    }}\n  ],\n  \"new_factions\": [\n    {{\n      \"id\": \"fac_fire_sect\",\n      \"name\": \"焚天宗\",\n      \"description\": \"行事霸道，垄断了周围的火铜矿...\",\n      \"relation_to_protagonist\": \"Hostile (潜在敌人)\"\n    }}\n  ],\n  \"new_characters\": [\n    {{\n      \"id\": \"char_villain_yan\",\n      \"name\": \"严炎\",\n      \"role\": \"Villain (本卷BOSS)\",\n      \"identity\": \"焚天宗少宗主\",\n      \"stats\": {{ \"level\": \"元婴初期\", \"combat_power\": 5000 }},\n      \"appearance\": \"红发，身穿流火长袍...\",\n      \"personality_tags\": [\"残暴\", \"贪婪\", \"护短\"],\n      \"initial_location_id\": \"loc_fire_city\"\n    }}\n  ],\n  \"new_items\": [\n    {{\n      \"id\": \"item_fire_crystal\",\n      \"name\": \"地心火晶\",\n      \"type\": \"Material\",\n      \"rarity\": \"Rare\",\n      \"effect\": \"大幅提升火系功法修炼速度\",\n      \"location_id\": \"loc_fire_city (Auction House)\"\n    }}\n  ]\n}}\n",
+  "json_schema": {
+    "type": "object",
+    "properties": {
+      "protagonist": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "gender": {
+            "type": "string"
+          },
+          "age": {
+            "type": "integer"
+          },
+          "core_archetype": {
+            "type": "string"
+          },
+          "personality_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "appearance": {
+            "type": "string"
+          },
+          "gold_finger": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "mechanism": {
+                "type": "string"
+              },
+              "visual_interface": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "type",
+              "mechanism",
+              "visual_interface"
+            ]
+          },
+          "current_status": {
+            "type": "object",
+            "properties": {
+              "stats": {
+                "type": "object",
+                "properties": {
+                  "level": {
+                    "type": "string",
+                    "description": "角色等级"
+                  },
+                  "cultivation_stage": {
+                    "type": "string",
+                    "description": "具体境界名称"
+                  },
+                  "combat_power": {
+                    "type": "integer",
+                    "description": "预估战力值"
+                  }
+                },
+                "required": [
+                  "level",
+                  "cultivation_stage",
+                  "combat_power"
+                ]
+              },
+              "state": {
+                "type": "string"
+              },
+              "location_id": {
+                "type": "string"
+              },
+              "inventory_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "social_relations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "target_id": {
+                      "type": "string"
+                    },
+                    "relation": {
+                      "type": "string"
+                    },
+                    "trust_level": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "target_id",
+                    "relation",
+                    "trust_level"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "stats",
+              "state",
+              "location_id",
+              "inventory_ids",
+              "social_relations"
+            ]
+          },
+          "background_story": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "gender",
+          "age",
+          "core_archetype",
+          "personality_tags",
+          "appearance",
+          "gold_finger",
+          "current_status",
+          "background_story"
+        ]
+      },
+      "supporting_characters": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string"
+            },
+            "gender": {
+              "type": "string"
+            },
+            "age": {
+              "type": "integer"
+            },
+            "core_archetype": {
+              "type": "string"
+            },
+            "personality_tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "appearance": {
+              "type": "string"
+            },
+            "catchphrase": {
+              "type": "string"
+            },
+            "function_in_plot": {
+              "type": "string"
+            },
+            "relationship_to_protagonist": {
+              "type": "string"
+            },
+            "current_status": {
+              "type": "object",
+              "properties": {
+                "stats": {
+                  "type": "object",
+                  "properties": {
+                    "level": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "level"
+                  ]
+                },
+                "state": {
+                  "type": "string"
+                },
+                "location_id": {
+                  "type": "string"
+                },
+                "inventory_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "stats",
+                "state",
+                "location_id"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "role",
+            "gender",
+            "age",
+            "core_archetype",
+            "personality_tags",
+            "appearance",
+            "catchphrase",
+            "function_in_plot",
+            "relationship_to_protagonist",
+            "current_status"
+          ]
+        }
+      },
+      "villains": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string"
+            },
+            "gender": {
+              "type": "string"
+            },
+            "age": {
+              "type": "integer"
+            },
+            "core_archetype": {
+              "type": "string"
+            },
+            "personality_tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "appearance": {
+              "type": "string"
+            },
+            "catchphrase": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            },
+            "hatred_source": {
+              "type": "string"
+            },
+            "fate_prediction": {
+              "type": "string"
+            },
+            "current_status": {
+              "type": "object",
+              "properties": {
+                "stats": {
+                  "type": "object",
+                  "properties": {
+                    "level": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "level"
+                  ]
+                },
+                "state": {
+                  "type": "string"
+                },
+                "location_id": {
+                  "type": "string"
+                },
+                "inventory_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "stats",
+                "state",
+                "location_id"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "role",
+            "gender",
+            "age",
+            "core_archetype",
+            "personality_tags",
+            "appearance",
+            "catchphrase",
+            "type",
+            "hatred_source",
+            "fate_prediction",
+            "current_status"
+          ]
+        }
+      },
+      "locations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "key_features": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "description",
+            "key_features"
+          ]
+        }
+      },
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            },
+            "rarity": {
+              "type": "string"
+            },
+            "effect_description": {
+              "type": "string"
+            },
+            "placement": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "location_id": {
+                  "type": "string"
+                },
+                "owner_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "rarity",
+            "effect_description",
+            "placement"
+          ]
+        }
+      },
+      "new_locations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "danger_level": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "description",
+            "danger_level"
+          ]
+        }
+      },
+      "new_factions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "relation_to_protagonist": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "description",
+            "relation_to_protagonist"
+          ]
+        }
+      },
+      "new_characters": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string"
+            },
+            "identity": {
+              "type": "string"
+            },
+            "stats": {
+              "type": "object",
+              "properties": {
+                "level": {
+                  "type": "string",
+                  "description": "角色等级"
+                },
+                "combat_power": {
+                  "type": "integer",
+                  "description": "预估战力值"
+                }
+              },
+              "required": [
+                "level",
+                "combat_power"
+              ]
+            },
+            "appearance": {
+              "type": "string"
+            },
+            "personality_tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "initial_location_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "role",
+            "identity",
+            "stats",
+            "appearance",
+            "personality_tags",
+            "initial_location_id"
+          ]
+        }
+      },
+      "new_items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            },
+            "rarity": {
+              "type": "string"
+            },
+            "effect": {
+              "type": "string"
+            },
+            "location_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "type",
+            "rarity",
+            "effect",
+            "location_id"
+          ]
+        }
+      }
+    }
+  }
+}

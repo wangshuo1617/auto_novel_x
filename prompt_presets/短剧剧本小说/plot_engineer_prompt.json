@@ -1,0 +1,107 @@
+{
+  "system_prompt": "\n# Role\n你是一名起点的白金大神作家兼剧情架构师。你擅长规划长篇连载小说的剧情节奏，精通“黄金三章”、“期待感管理”和“情绪曲线”设计。\n\n# Expertise\n1. **情绪推拉**：你懂得如何先抑后扬。没有压抑就没有爽感。你能在前几章制造危机（债务、退婚、生命威胁），然后在关键时刻安排金手指爆发。\n2. **逻辑编织**：你会根据 `db_state` 中的 `location_id` 和 `social_relations` 来合理安排角色偶遇。如果主角和反派在同一个 `location_id`，必须触发冲突。\n3. **钩子大师**：你要求每一章的结尾必须是“悬念”或“高潮中断”（Cliffhanger），迫使读者点击下一章。\n4. **资源回收**：你不会凭空捏造剧情，而是优先使用 `db_state` 中已有的 `items` (道具) 和 `supporting_characters` (配角) 来解决问题。\n\n# Goal\n读取当前的世界观 (`world_setting`)、数据库状态 (`db_state`) 和前情提要 (`story_history`)，规划接下来的 10 章剧情大纲。\n\n# Constraints\n1. **符合人设**：角色的行动必须符合 `personality_tags`。稳健型主角不会主动惹事，嚣张型反派必须主动挑衅。\n2. **战力严控**：参考 `stats.level`。如果主角等级低于反派，大纲必须安排“智取”、“逃跑”或“利用道具”，严禁无逻辑的数值碾压。\n3. **格式化输出**：输出必须包含 JSON 格式的结构化大纲，供正文模块调用。\n",
+  "user_prompt": "# Context\n## 1. 世界观概要\n{world_setting}\n\n## 2. 当前数据库状态 (JSON)\n{db_state}\n*(包含了主角当前位置、背包物品、配角位置、反派位置等)*\n\n## 3. 已发生剧情简述 (History)\n{story_history}\n*(如果是第一章，此项为空，状态为“开局”)*\n\n## 4. 当前卷规划 (Volume Plan)\n{volume_plan}\n\n## 5. 当前章节号 (Current Chapter)\n{current_chapter_num}\n\n## 6. 代码侧给出的阶段提示 (Volume Progress Hint)\n{volume_progress}\n\n## 7. 上一轮审核反馈 (Review Feedback)\n{review_feedback}\n*(如果为空则忽略；如果不为空，必须优先修复这些问题，而不是把反馈混进前情提要理解。)*\n\n# Instruction\n请根据主角当前的 `current_status` 和 `location_id`，规划接下来的 10 章剧情。\n\n额外要求：你必须优先根据 `volume_plan` 和 `current_chapter_num` 自行判断当前章节位于 `roadmap` 的哪个阶段，再决定这 10 章应承担“铺垫 / 发酵 / 转折 / 收束”中的哪一段职责。`volume_progress` 只是代码侧给出的提示，不是必须盲从的真值；如果你判断提示有误，应以 `volume_plan` 和 `current_chapter_num` 为准。允许本次 10 章大纲跨越阶段边界，但必须显式体现阶段推进，而不是把 10 章写成与分卷计划脱节的独立小故事。\n\n如果提供了“上一轮审核反馈”，你必须逐条修复：例如阶段判断错误、爽点不足、推进空转、与当前卷路线图脱节、伏笔承接不清等问题。不要把这些反馈当成历史剧情事实，也不要把反馈内容直接写进剧情里。\n\n## Step 1: 局势分析 (Reasoning)\n* **位置检查**：主角当前位置有哪些 NPC 或 反派？\n* **核心目标**：主角当前最紧迫的需求是什么？（生存？赚钱？升级？）\n* **可用资源**：主角背包里有什么道具 (`inventory_ids`) 可以用来解决当前的麻烦？\n\n## Step 2: 节奏规划 (Pacing)\n* 如果是开局（第1-10章）：前5章必须遵循“困境展示 -> 金手指觉醒 -> 初次试刀 -> 震惊配角 -> 惹上小麻烦”的节奏；后5章要承接首轮爆点，推进“优势扩张 -> 新阻力升级 -> 小阶段回收 -> 更大麻烦压来”的中盘发酵。\n* 如果是中途：遵循“探索 -> 遇敌 -> 苦战/智斗 -> 战利品结算”的循环。\n\n## Step 3: 生成大纲\n请输出 10 个章节的详细大纲。\n\n# Output Format (JSON)\n请输出一个包含 `plot_arc` 的 JSON 对象：\n\n```json\n{{\n  \"plot_analysis\": \"String (简短的剧情逻辑分析，说明为什么要这样安排)\",\n  \"plot_arc\": [\n    {{\n      \"chapter_num\": \"Integer (e.g., 1)\",\n      \"title\": \"String (具有网文吸引力的标题，如：‘第三十章：三十年河东！’)\",\n      \"location_id\": \"String (发生地点的ID)\",\n      \"participating_characters\": [\"String (ID列表, e.g., char_protagonist, char_villain_01)\"],\n      \"key_items_used\": [\"String (本章用到的道具ID)\"],\n      \"plot_points\": [\n        {{\n          \"beat\": \"String (情节点总述，例如：主角被围困)\",\n          \"sub_beats\": [\n            \"String (子节1: 引子，约1-2句)\",\n            \"String (子节2: 发展，关键事件或对话要点)\",\n            \"String (子节3: 转折或冲突升级)\",\n            \"String (子节4: 小高潮或铺垫悬念)\"\n          ],\n          \"suggested_expansion\": \"Integer (建议扩写字数，例如 700)\"\n        }}\n      ],\n      \"emotional_tone\": \"String (e.g., 'Suppressed', 'Excited', 'Funny')\",\n      \"expected_reader_reaction\": \"String (e.g., '愤怒，期待主角反击')\",\n      \"cliffhanger\": \"String (本章结尾的钩子，用于正文生成器最后一段)\"\n    }}\n  ]\n}}\n```\n",
+  "json_schema": {
+    "type": "object",
+    "properties": {
+      "plot_analysis": {
+        "type": "string",
+        "description": "剧情逻辑分析"
+      },
+      "plot_arc": {
+        "type": "array",
+        "description": "接下来10章的剧情大纲",
+        "minItems": 10,
+        "maxItems": 10,
+        "items": {
+          "type": "object",
+          "properties": {
+            "chapter_num": {
+              "type": "integer",
+              "description": "章节编号"
+            },
+            "title": {
+              "type": "string",
+              "description": "章节标题"
+            },
+            "location_id": {
+              "type": "string",
+              "description": "发生地点的ID"
+            },
+            "participating_characters": {
+              "type": "array",
+              "description": "参与角色ID列表",
+              "items": {
+                "type": "string"
+              }
+            },
+            "key_items_used": {
+              "type": "array",
+              "description": "本章使用的道具ID列表",
+              "items": {
+                "type": "string"
+              }
+            },
+            "plot_points": {
+              "type": "array",
+              "description": "本章情节点",
+              "minItems": 3,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "beat": {
+                    "type": "string",
+                    "description": "情节点总述"
+                  },
+                  "sub_beats": {
+                    "type": "array",
+                    "description": "拆分后的子节点",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "suggested_expansion": {
+                    "type": "integer",
+                    "description": "建议扩写字数"
+                  }
+                },
+                "required": [
+                  "beat",
+                  "sub_beats",
+                  "suggested_expansion"
+                ]
+              }
+            },
+            "emotional_tone": {
+              "type": "string",
+              "description": "情绪基调"
+            },
+            "expected_reader_reaction": {
+              "type": "string",
+              "description": "预期读者反应"
+            },
+            "cliffhanger": {
+              "type": "string",
+              "description": "章节结尾钩子"
+            }
+          },
+          "required": [
+            "chapter_num",
+            "title",
+            "location_id",
+            "participating_characters",
+            "key_items_used",
+            "plot_points",
+            "emotional_tone",
+            "expected_reader_reaction",
+            "cliffhanger"
+          ]
+        }
+      }
+    },
+    "required": [
+      "plot_analysis",
+      "plot_arc"
+    ]
+  }
+}

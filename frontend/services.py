@@ -3,15 +3,18 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import shutil
 import traceback
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from agents import DraftSmith, PlotEngineer
 from utils.book_artifacts import (
     chapter_display_name,
     detect_book_title,
+    infer_main_story_goal_from_world_setting,
     list_artifact_paths,
     list_book_dirs,
     list_chapter_files,
@@ -20,13 +23,17 @@ from utils.book_artifacts import (
     list_plot_files,
     list_volume_plan_files,
     load_json_file,
+    parse_lore_identity,
+    parse_plot_range_identity,
+    parse_volume_plan_number,
+    plot_arc_artifact_path,
     resolve_relative_path,
     write_json_file,
     write_text_file,
 )
 from utils.consistency_checker import check_book_consistency
 from utils.database import get_database_for_book
-from utils.generation_state import list_generation_states
+from utils.generation_state import list_generation_states, reconcile_stale_generation_state
 from utils.llm_logging import list_llm_run_logs
 from utils.prompt_presets import (
     DEFAULT_PROMPT_PRESET_ID,
@@ -35,7 +42,12 @@ from utils.prompt_presets import (
     list_prompt_presets,
     save_prompt_preset_meta,
     save_prompt_template,
+    use_prompt_preset,
 )
+from utils.llm_client import gemini_client, load_prompt_config
+from utils.story_context import build_volume_progress, empty_story_memory, merge_lore_into_story_memory, story_context_for_draft, story_context_for_plot
+from workflows.phase_initialization import _business_markdown
+from workflows.review_utils import is_review_passed, run_reader_review
 from workflows.main_loop import MainLoop
 
 
@@ -104,7 +116,9 @@ class BookSummary:
     title: str
     path: str
     genre: str
+    tagline: str
     logline: str
+    blurb: str
     chapter_count: int
     volume_count: int
     artifact_count: int
@@ -126,6 +140,7 @@ def list_books(output_dir: str | Path = "output") -> list[BookSummary]:
     books: list[BookSummary] = []
     prompt_preset_map = {preset["id"]: preset for preset in list_prompt_presets()}
     for book_dir in list_book_dirs(output_dir):
+        reconcile_stale_generation_state(book_dir)
         world_setting = load_json_file(book_dir / "world_setting.json", {})
         business = world_setting.get("business_analysis", {}) if isinstance(world_setting, dict) else {}
         book_meta = _load_book_meta(book_dir)
@@ -139,12 +154,14 @@ def list_books(output_dir: str | Path = "output") -> list[BookSummary]:
                 title=detect_book_title(book_dir),
                 path=str(book_dir),
                 genre=business.get("selected_genre", ""),
+                tagline=business.get("tagline", ""),
                 logline=business.get("logline", ""),
+                blurb=business.get("blurb", ""),
                 chapter_count=chapter_count,
                 volume_count=volume_count,
                 artifact_count=len(list_artifact_paths(book_dir)),
                 updated_at=_format_timestamp(book_dir.stat().st_mtime),
-                main_story_goal=book_meta.get("main_story_goal", ""),
+                main_story_goal=book_meta.get("main_story_goal", "") or infer_main_story_goal_from_world_setting(world_setting),
                 prompt_preset_id=prompt_preset_id,
                 prompt_preset_name=str(prompt_preset.get("name", prompt_preset_id)),
             )
@@ -155,6 +172,7 @@ def list_books(output_dir: str | Path = "output") -> list[BookSummary]:
 
 def get_book_view(book_dir: str | Path) -> dict[str, Any]:
     book_path = Path(book_dir)
+    reconcile_stale_generation_state(book_path)
     world_setting = load_json_file(book_path / "world_setting.json", {})
     book_meta = _load_book_meta(book_path)
     db = get_database_for_book(book_path)
@@ -235,6 +253,7 @@ def create_book_with_initialization(
             "book_dir": str(loop.book_dir),
             "initialized": _initialize_loop(loop),
             "title": detect_book_title(loop.book_dir),
+            "main_story_goal": loop.main_story_goal,
             "prompt_preset_id": prompt_preset_id,
         },
         message="书籍已创建并完成初始化。",
@@ -246,15 +265,27 @@ def run_book_action(
     book_dir: str | Path,
     action: str,
     main_story_goal: str = "",
+    chapter_count: int = 1,
     prompt_preset_id: str = "",
     log_callback: Callable[[str], None] | None = None,
 ) -> ActionResult:
     book_path = Path(book_dir)
+    reconcile_stale_generation_state(book_path)
+    book_meta = _load_book_meta(book_path)
+    world_setting = load_json_file(book_path / "world_setting.json", {})
     selected_prompt_preset_id = prompt_preset_id or str(_load_book_meta(book_path).get("prompt_preset_id") or DEFAULT_PROMPT_PRESET_ID)
-    _save_book_meta(book_path, {"main_story_goal": main_story_goal.strip(), "prompt_preset_id": selected_prompt_preset_id})
+    effective_main_story_goal = (
+        main_story_goal.strip()
+        or str(book_meta.get("main_story_goal", "")).strip()
+        or infer_main_story_goal_from_world_setting(world_setting)
+    )
+    _save_book_meta(
+        book_path,
+        {"main_story_goal": effective_main_story_goal, "prompt_preset_id": selected_prompt_preset_id},
+    )
     loop = MainLoop(
         book_dir_path=str(book_path),
-        main_story_goal=main_story_goal.strip(),
+        main_story_goal=effective_main_story_goal,
         prompt_preset_id=selected_prompt_preset_id,
     )
 
@@ -262,6 +293,18 @@ def run_book_action(
         return _capture_action(
             lambda: _generate_chapter_and_maybe_start_new_volume(loop),
             message="已生成下一章，并检查当前卷 roadmap 完成状态。",
+            log_callback=log_callback,
+        )
+    if action == "generate_chapters":
+        validated_count = _validate_batch_chapter_count(chapter_count)
+        return _capture_action(
+            lambda: _generate_multiple_chapters(
+                book_path,
+                main_story_goal=effective_main_story_goal,
+                prompt_preset_id=selected_prompt_preset_id,
+                chapter_count=validated_count,
+            ),
+            message=f"已连续生成 {validated_count} 章，并逐章检查卷切换状态。",
             log_callback=log_callback,
         )
     if action == "start_new_volume":
@@ -294,6 +337,22 @@ def update_book_prompt_preset(book_dir: str | Path, prompt_preset_id: str) -> No
     _save_book_meta(book_dir, {"prompt_preset_id": prompt_preset_id})
 
 
+def delete_book(book_dir: str | Path) -> dict[str, Any]:
+    book_path = Path(book_dir).resolve()
+    if not book_path.exists():
+        raise ValueError(f"书籍目录不存在：{book_path}")
+    if not book_path.is_dir():
+        raise ValueError(f"书籍路径不是目录：{book_path}")
+    if not book_path.name.startswith("book_"):
+        raise ValueError(f"仅支持删除 book_* 书籍目录：{book_path.name}")
+    if not any((book_path / marker).exists() for marker in ("world_setting.json", BOOK_META_FILE, "database.db")):
+        raise ValueError(f"目标目录看起来不是有效书籍目录：{book_path}")
+
+    book_title = detect_book_title(book_path)
+    shutil.rmtree(book_path)
+    return {"book_dir": str(book_path), "title": book_title}
+
+
 def read_artifact_text(book_dir: str | Path, relative_path: str) -> str:
     artifact_path = resolve_relative_path(book_dir, relative_path)
     with open(artifact_path, "r", encoding="utf-8") as f:
@@ -307,6 +366,23 @@ def save_artifact_text(book_dir: str | Path, relative_path: str, content: str) -
         write_json_file(artifact_path, parsed)
         return
     write_text_file(artifact_path, content)
+
+
+def regenerate_artifact(
+    book_dir: str | Path,
+    relative_path: str,
+    prompt_preset_id: str = "",
+    log_callback: Callable[[str], None] | None = None,
+) -> ActionResult:
+    book_path = Path(book_dir)
+    selected_prompt_preset_id = prompt_preset_id or str(
+        _load_book_meta(book_path).get("prompt_preset_id") or DEFAULT_PROMPT_PRESET_ID
+    )
+    return _capture_action(
+        lambda: _regenerate_artifact(book_path, relative_path, selected_prompt_preset_id),
+        message=f"已重生成 {relative_path}。",
+        log_callback=log_callback,
+    )
 
 
 def get_book_health_report(book_dir: str | Path) -> dict[str, Any]:
@@ -399,6 +475,367 @@ def _database_table_schema(table_name: str) -> dict[str, Any]:
     return schema
 
 
+def is_regeneratable_artifact(relative_path: str) -> bool:
+    """True when _regenerate_artifact supports this path."""
+    if relative_path in ("world_setting.json", "world_setting.md"):
+        return True
+    if parse_chapter_identity(relative_path) is not None:
+        return True
+    return parse_plot_range_identity(relative_path) is not None
+
+
+def _regenerate_artifact(book_path: Path, relative_path: str, prompt_preset_id: str) -> dict[str, Any]:
+    if relative_path == "world_setting.json":
+        return _regenerate_world_setting(book_path, prompt_preset_id)
+    if relative_path == "world_setting.md":
+        return _rebuild_world_setting_markdown(book_path)
+    chapter_identity = parse_chapter_identity(relative_path)
+    if chapter_identity:
+        return _regenerate_chapter_markdown(book_path, relative_path, prompt_preset_id)
+    if parse_plot_range_identity(relative_path):
+        return _regenerate_plot_arc(book_path, relative_path, prompt_preset_id)
+    raise ValueError(f"暂不支持自动重生成该产物：{relative_path}")
+
+
+def _regenerate_plot_arc(book_path: Path, relative_path: str, prompt_preset_id: str) -> dict[str, Any]:
+    plot_file = resolve_relative_path(book_path, relative_path)
+    identity = parse_plot_range_identity(plot_file)
+    if identity is None:
+        raise ValueError(f"无法识别剧情大纲文件：{relative_path}")
+    volume_num, start_chapter, _ = identity
+
+    world_setting = load_json_file(book_path / "world_setting.json", {})
+    if not isinstance(world_setting, dict) or not world_setting:
+        raise ValueError("缺少 world_setting.json，无法重生成剧情大纲")
+    novel_setting = world_setting.get("novel_setting", {})
+    db_state = get_database_for_book(book_path).get_state()
+
+    volume_plan: dict = {}
+    for vf in list_volume_plan_files(book_path):
+        if parse_volume_plan_number(vf) == volume_num:
+            volume_plan = load_json_file(vf, {})
+            break
+
+    story_memory, lore_records = _rebuild_story_memory_before_chapter(book_path, volume_num, start_chapter)
+    story_history = story_context_for_plot(story_memory)
+    volume_progress = build_volume_progress(volume_plan, start_chapter)
+
+    print(f"正在重生成第 {volume_num} 卷第 {start_chapter} 章起的剧情大纲...")
+    with use_prompt_preset(prompt_preset_id):
+        plot_result = PlotEngineer(
+            world_setting=novel_setting,
+            db_state=db_state,
+            story_history=story_history,
+            volume_plan=volume_plan,
+            volume_progress=volume_progress,
+            current_chapter_num=start_chapter,
+        ).run()
+
+    if not isinstance(plot_result, dict):
+        raise ValueError("PlotEngineer 必须返回 JSON 对象")
+    plot_arc = plot_result.get("plot_arc") or []
+    if not plot_arc:
+        raise ValueError("PlotEngineer 返回了空大纲")
+
+    for i, entry in enumerate(plot_arc):
+        if isinstance(entry, dict):
+            entry["chapter_num"] = start_chapter + i
+
+    plot_result["volume_num"] = volume_num
+    plot_result["volume_progress"] = volume_progress
+    write_json_file(plot_file, plot_result)
+    return {"artifact": relative_path}
+
+
+def _regenerate_world_setting(book_path: Path, prompt_preset_id: str) -> dict[str, Any]:
+    current_world_setting = load_json_file(book_path / "world_setting.json", {})
+    if not isinstance(current_world_setting, dict) or not current_world_setting:
+        raise ValueError("缺少可用于重生成的 world_setting.json")
+
+    book_meta = _load_book_meta(book_path)
+    with use_prompt_preset(prompt_preset_id):
+        system_prompt = load_prompt_config("world_architect_prompt", "system")
+        response_schema = load_prompt_config("world_architect_prompt", "json_schema")
+
+    current_title = ((current_world_setting.get("business_analysis") or {}).get("book_title") or "").strip()
+    user_prompt = f"""
+# Context
+你正在重生成一本已存在小说的总纲。目标不是推翻它，而是在保留核心 premise、人物关系、世界观底盘和商业方向的前提下，输出符合当前提示词要求的完整新版总纲。
+
+## 已有 book_meta
+{json.dumps(book_meta, ensure_ascii=False, indent=2)}
+
+## 当前总纲（必须优先保留）
+{json.dumps(current_world_setting, ensure_ascii=False, indent=2)}
+
+# Task
+请基于当前总纲做“保守升级”，输出完整 JSON：
+1. 尽量保留现有书名、题材、核心关系、世界观逻辑、独特卖点与情绪基调。
+2. 如果当前总纲缺少新 schema 要求的字段，必须补齐，尤其是 `ending_blueprint`。
+3. 如果当前内容与现行提示词冲突，只做最小必要改写，不要把整本书改成另一套 premise。
+4. 如果已有书名质量足够好，默认保留原书名：{current_title or "（如无则自行拟定）"}。
+5. 不要把自伤、轻生、跳崖、拿命威胁他人写成核心卖点、关系推进器或终局高光。
+
+# Output
+严格按照当前 schema 输出完整 JSON，不要附加解释。
+""".strip()
+
+    result = gemini_client(system_prompt, user_prompt, response_schema)
+    if not isinstance(result, dict):
+        raise ValueError("重生成的 world_setting 必须是 JSON 对象")
+
+    write_json_file(book_path / "world_setting.json", result)
+    novel_setting = result.get("novel_setting", {})
+    write_text_file(book_path / "world_setting.md", _business_markdown(result.get("business_analysis", {}), novel_setting))
+    return {"artifact": "world_setting.json", "book_title": detect_book_title(book_path)}
+
+
+def _rebuild_world_setting_markdown(book_path: Path) -> dict[str, Any]:
+    world_setting = load_json_file(book_path / "world_setting.json", {})
+    if not isinstance(world_setting, dict) or not world_setting:
+        raise ValueError("缺少 world_setting.json，无法重生成 world_setting.md")
+    novel_setting = world_setting.get("novel_setting", {})
+    write_text_file(book_path / "world_setting.md", _business_markdown(world_setting.get("business_analysis", {}), novel_setting))
+    return {"artifact": "world_setting.md"}
+
+
+def _regenerate_chapter_markdown(book_path: Path, relative_path: str, prompt_preset_id: str) -> dict[str, Any]:
+    chapter_path = resolve_relative_path(book_path, relative_path)
+    chapter_identity = parse_chapter_identity(chapter_path)
+    if chapter_identity is None:
+        raise ValueError(f"无法识别章节产物：{relative_path}")
+    volume_num, chapter_num = chapter_identity
+
+    world_setting = load_json_file(book_path / "world_setting.json", {})
+    if not isinstance(world_setting, dict) or not world_setting:
+        raise ValueError("缺少 world_setting.json，无法重生成章节")
+    novel_setting = world_setting.get("novel_setting", {})
+    if not isinstance(novel_setting, dict) or not novel_setting:
+        raise ValueError("world_setting.json 缺少 novel_setting，无法重生成章节")
+
+    chapter_outline, plot_analysis, plot_data = _load_chapter_outline_for_regeneration(book_path, volume_num, chapter_num)
+    db_state = get_database_for_book(book_path).get_state()
+    story_memory, prior_lore_records = _rebuild_story_memory_before_chapter(book_path, volume_num, chapter_num)
+    story_history_for_draft = story_context_for_draft(story_memory, prior_lore_records)
+    previous_chapter_ending = _extract_chapter_hook(_load_previous_chapter_ending(book_path, volume_num, chapter_num)) if _load_previous_chapter_ending(book_path, volume_num, chapter_num) else ""
+    plot_data_for_draft = _build_plot_data_for_draft_from_outline(db_state, chapter_outline)
+
+    print(f"正在重生成第 {volume_num} 卷第 {chapter_num} 章...")
+    later_chapters = [
+        path for path in list_chapter_files(book_path)
+        if (identity := parse_chapter_identity(path)) and identity > (volume_num, chapter_num)
+    ]
+    if later_chapters:
+        print("⚠ 当前仅重写该章节 Markdown，不会自动重算后续章节、lore 或 story_memory。")
+
+    last_review: dict[str, Any] = {}
+    raw_text = ""
+    chapter_title = f"第{chapter_num}章"
+
+    with use_prompt_preset(prompt_preset_id):
+        for attempt in range(3):
+            rewrite_feedback = ""
+            if last_review and attempt > 0:
+                rewrite_feedback = "\n".join(last_review.get("improvement_suggestions", []))
+            raw_text, chapter_title = _draft_chapter_markdown(
+                novel_setting=novel_setting,
+                db_state=db_state,
+                story_history_for_draft=story_history_for_draft,
+                previous_chapter_ending=previous_chapter_ending,
+                plot_analysis=plot_analysis,
+                plot_data_for_draft=plot_data_for_draft,
+                chapter_num=chapter_num,
+                rewrite_feedback=rewrite_feedback,
+            )
+            last_review = run_reader_review(
+                review_stage="chapter_draft",
+                content_to_review=raw_text,
+                context_payload={
+                    "chapter_outline": chapter_outline,
+                    "plot_analysis": plot_analysis,
+                    "plot_data": plot_data,
+                    "story_context": story_history_for_draft,
+                    "previous_chapter_ending": previous_chapter_ending,
+                    "chapter_cliffhanger": chapter_outline.get("cliffhanger", ""),
+                },
+                evaluation_focus="检查重生成章节是否兑现当前章大纲、承接前文，并修复当前用户指出的人物与关系问题。",
+            ) or {"decision": "PASS", "score": 3}
+            score = _coerce_int(last_review.get("score", 3), 3)
+            char_count = sum(1 for c in raw_text if not c.isspace())
+            if is_review_passed(last_review) and char_count >= 2500:
+                print(f"✓ 章节审核通过 (评分: {score}/5, 字数≈{char_count})")
+                break
+            if char_count < 2500 and attempt < 2:
+                wc_note = f"\n字数不足（当前约{char_count}字），请将正文扩充至2800-3200字。"
+                rewrite_feedback = "\n".join(last_review.get("improvement_suggestions", [])) + wc_note
+                # skip the outer rewrite_feedback assignment next iteration
+                last_review = {}
+                raw_text, chapter_title = _draft_chapter_markdown(
+                    novel_setting=novel_setting,
+                    db_state=db_state,
+                    story_history_for_draft=story_history_for_draft,
+                    previous_chapter_ending=previous_chapter_ending,
+                    plot_analysis=plot_analysis,
+                    plot_data_for_draft=plot_data_for_draft,
+                    chapter_num=chapter_num,
+                    rewrite_feedback=rewrite_feedback,
+                )
+                char_count = sum(1 for c in raw_text if not c.isspace())
+                print(f"  字数扩充后≈{char_count}")
+                break
+            print(f"⚠ 章节审核未通过（尝试 {attempt + 1}/3）：{last_review.get('review_summary', '无反馈')}")
+        else:
+            raise RuntimeError(f"章节重生成失败：{last_review.get('review_summary', '审核未通过')}")
+
+    write_text_file(chapter_path, f"# {chapter_title}\n\n{raw_text}")
+    print(f"✓ 章节已重生成: {chapter_path.name}")
+    return {
+        "artifact": relative_path,
+        "title": chapter_title,
+        "volume_num": volume_num,
+        "chapter_num": chapter_num,
+        "scope": "chapter_markdown_only",
+    }
+
+
+def _load_chapter_outline_for_regeneration(book_path: Path, volume_num: int, chapter_num: int) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    for plot_file in list_plot_files(book_path):
+        identity = parse_plot_range_identity(plot_file)
+        if not identity:
+            continue
+        file_volume, start_chapter, end_chapter = identity
+        if file_volume != volume_num or not start_chapter <= chapter_num <= end_chapter:
+            continue
+        plot_data = load_json_file(plot_file, {})
+        if not isinstance(plot_data, dict):
+            break
+        plot_arc = plot_data.get("plot_arc", []) or []
+        for outline in plot_arc:
+            if isinstance(outline, dict) and outline.get("chapter_num") == chapter_num:
+                return outline, str(plot_data.get("plot_analysis", "")), plot_data
+        raise ValueError(f"{plot_file.name} 中缺少第 {chapter_num} 章大纲")
+    raise ValueError(f"未找到可用于重生成第 {volume_num} 卷第 {chapter_num} 章的 plot_arc 缓存")
+
+
+def _rebuild_story_memory_before_chapter(book_path: Path, volume_num: int, chapter_num: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    story_memory = empty_story_memory()
+    lore_records: list[dict[str, Any]] = []
+    global_chapter_num = 0
+
+    for lore_file in list_lore_files(book_path):
+        identity = parse_lore_identity(lore_file)
+        if not identity:
+            continue
+        lore_volume, lore_chapter = identity
+        if (lore_volume, lore_chapter) >= (volume_num, chapter_num):
+            break
+        lore_data = load_json_file(lore_file, {})
+        if not isinstance(lore_data, dict):
+            continue
+        global_chapter_num += 1
+        lore_records.append(lore_data)
+        story_memory = merge_lore_into_story_memory(
+            story_memory,
+            lore_data,
+            chapter_num=global_chapter_num,
+            chapter_title=f"第{global_chapter_num}章",
+            volume_num=lore_volume,
+        )
+
+    return story_memory, lore_records
+
+
+def _extract_chapter_hook(text: str) -> str:
+    import re
+    text = re.sub(r"^#.*\n", "", text).strip()
+    sentences = re.split(r"(?<=[。！？…\u201d\u300d\u300f])", text)
+    for sent in reversed(sentences):
+        sent = sent.strip()
+        if len(sent) >= 8:
+            return f"[前章钩子: \"{sent[-80:]}\"]"
+    return f"[前章钩子: \"{text[-60:]}\"]"
+
+
+def _load_previous_chapter_ending(book_path: Path, volume_num: int, chapter_num: int, max_chars: int = 600) -> str:
+    chapter_files = list_chapter_files(book_path)
+    previous_file: Path | None = None
+    for chapter_file in chapter_files:
+        identity = parse_chapter_identity(chapter_file)
+        if identity and identity < (volume_num, chapter_num):
+            previous_file = chapter_file
+        elif identity and identity >= (volume_num, chapter_num):
+            break
+    if previous_file is None:
+        return ""
+    try:
+        content = previous_file.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+    return content[-max_chars:] if content else ""
+
+
+def _build_plot_data_for_draft_from_outline(db_state: dict[str, Any], chapter_outline: dict[str, Any]) -> dict[str, Any]:
+    protagonist = db_state.get("protagonist", {}) or {}
+    supporting_characters = db_state.get("supporting_characters", []) or []
+    villains = db_state.get("villains", []) or []
+    participating_characters = []
+
+    if protagonist:
+        participating_characters.append(protagonist)
+
+    for char_id in chapter_outline.get("participating_characters", []) or []:
+        for char in [*supporting_characters, *villains]:
+            if isinstance(char, dict) and char.get("id") == char_id:
+                participating_characters.append(char)
+                break
+
+    return {
+        "location_id": chapter_outline.get("location_id", ""),
+        "plot_points": chapter_outline.get("plot_points", []) or [],
+        "participating_characters": participating_characters,
+        "key_items_used": chapter_outline.get("key_items_used", []) or [],
+        "chapter_num": chapter_outline.get("chapter_num", 0),
+        "expected_reader_reaction": chapter_outline.get("expected_reader_reaction", ""),
+        "emotional_tone": chapter_outline.get("emotional_tone", ""),
+        "chapter_cliffhanger": chapter_outline.get("cliffhanger", ""),
+    }
+
+
+def _draft_chapter_markdown(
+    *,
+    novel_setting: dict[str, Any],
+    db_state: dict[str, Any],
+    story_history_for_draft: str,
+    previous_chapter_ending: str,
+    plot_analysis: str,
+    plot_data_for_draft: dict[str, Any],
+    chapter_num: int,
+    rewrite_feedback: str = "",
+) -> tuple[str, str]:
+    print("\n[E] 正文塑造者正在重生成正文...")
+    draft_context = story_history_for_draft
+    if rewrite_feedback.strip():
+        draft_context = f"{draft_context}\n\n本章重写要求：\n{rewrite_feedback.strip()}".strip()
+
+    draft_smith = DraftSmith(
+        world_setting=novel_setting,
+        db_state=db_state,
+        story_history=draft_context,
+        previous_chapter_ending=previous_chapter_ending,
+        plot_analysis=plot_analysis,
+        plot_data=plot_data_for_draft,
+    )
+    draft_result = draft_smith.run()
+    if not isinstance(draft_result, dict):
+        raise ValueError("DraftSmith 必须返回 JSON 对象")
+
+    raw_text = str(draft_result.get("draft_content", "")).strip()
+    chapter_title = str(draft_result.get("title", f"第{chapter_num}章")).strip() or f"第{chapter_num}章"
+    if not raw_text:
+        raise ValueError("DraftSmith 返回缺少 draft_content")
+    return raw_text, chapter_title
+
+
 def _row_has_any_value(row: dict[str, Any], columns: list[str]) -> bool:
     return any(not _is_blank_cell(row.get(column)) for column in columns)
 
@@ -485,6 +922,24 @@ def _normalize_integer_cell(column: str, value: Any, default: int | None) -> int
         return int(value)
     except Exception as exc:
         raise ValueError(f"{column} 必须是整数") from exc
+
+
+def _coerce_int(value: Any, default: int) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return default
+        try:
+            return int(stripped)
+        except ValueError:
+            return default
+    return default
 
 
 def _database_primary_keys(db, table_name: str, pk_columns: list[str]) -> set[tuple[Any, ...]]:
@@ -698,12 +1153,21 @@ def _capture_action(func: Callable[[], Any], message: str, log_callback: Callabl
 
 def _initialize_loop(loop: MainLoop) -> bool:
     loop.initialize()
+    if loop.main_story_goal:
+        _save_book_meta(loop.book_dir, {"main_story_goal": loop.main_story_goal})
     return True
 
 
 def _start_new_volume(loop: MainLoop) -> dict[str, Any]:
     loop.start_new_volume()
     return {"current_volume_num": loop.current_volume_num}
+
+
+def _validate_batch_chapter_count(chapter_count: Any) -> int:
+    normalized = _coerce_int(chapter_count, 0)
+    if normalized < 2 or normalized > 5:
+        raise ValueError("手动连续生成章节数必须在 2-5 章之间")
+    return normalized
 
 
 def _generate_chapter_and_maybe_start_new_volume(loop: MainLoop) -> dict[str, Any]:
@@ -742,6 +1206,53 @@ def _generate_chapter_and_maybe_start_new_volume(loop: MainLoop) -> dict[str, An
     return payload
 
 
+def _generate_multiple_chapters(
+    book_path: Path,
+    *,
+    main_story_goal: str,
+    prompt_preset_id: str,
+    chapter_count: int,
+) -> dict[str, Any]:
+    generated_chapters: list[dict[str, Any]] = []
+    volume_transitions: list[dict[str, int]] = []
+
+    for index in range(chapter_count):
+        print("\n" + "-" * 60)
+        print(f"手动连续生成进度 {index + 1}/{chapter_count}")
+        print("-" * 60)
+        loop = MainLoop(
+            book_dir_path=str(book_path),
+            main_story_goal=main_story_goal,
+            prompt_preset_id=prompt_preset_id,
+        )
+        payload = _generate_chapter_and_maybe_start_new_volume(loop)
+        chapter_payload = payload.get("chapter", {}) if isinstance(payload, dict) else {}
+        if isinstance(chapter_payload, dict):
+            generated_chapters.append(chapter_payload)
+
+        if payload.get("prestarted_new_volume"):
+            volume_transitions.append(
+                {
+                    "from_volume_num": int(payload.get("precompleted_volume_num", 0)),
+                    "to_volume_num": int(payload.get("current_volume_num", 0)),
+                }
+            )
+        elif payload.get("volume_complete"):
+            volume_transitions.append(
+                {
+                    "from_volume_num": int(payload.get("completed_volume_num", 0)),
+                    "to_volume_num": int(payload.get("current_volume_num", 0)),
+                }
+            )
+
+    return {
+        "requested_count": chapter_count,
+        "generated_count": len(generated_chapters),
+        "chapters": generated_chapters,
+        "volume_transitions": volume_transitions,
+    }
+
+
 def _find_book_summary(book_dir: Path) -> BookSummary:
     for summary in list_books(book_dir.parent):
         if Path(summary.path) == book_dir:
@@ -751,12 +1262,15 @@ def _find_book_summary(book_dir: Path) -> BookSummary:
         title=detect_book_title(book_dir),
         path=str(book_dir),
         genre="",
+        tagline="",
         logline="",
+        blurb="",
         chapter_count=len(list_chapter_files(book_dir)),
         volume_count=_volume_count(book_dir),
         artifact_count=len(list_artifact_paths(book_dir)),
         updated_at=_format_timestamp(book_dir.stat().st_mtime),
-        main_story_goal=_load_book_meta(book_dir).get("main_story_goal", ""),
+        main_story_goal=_load_book_meta(book_dir).get("main_story_goal", "")
+        or infer_main_story_goal_from_world_setting(load_json_file(book_dir / "world_setting.json", {})),
         prompt_preset_id=str(_load_book_meta(book_dir).get("prompt_preset_id") or DEFAULT_PROMPT_PRESET_ID),
         prompt_preset_name=_prompt_preset_name(_load_book_meta(book_dir)),
     )
@@ -810,3 +1324,275 @@ def _volume_count(book_dir: str | Path) -> int:
         if (identity := parse_chapter_identity(chapter_file))
     }
     return max(volume_plan_count, len(chapter_volumes))
+
+
+# ─── 细化大纲：预览与带细纲生成 ────────────────────────────────────────────────
+
+def _format_outline_as_template(outline: dict, chapter_num: int, db_state: dict | None = None) -> str:
+    """将 plot_arc 条目格式化为可编辑细纲，自然展开 plot_points，不强制固定段落结构。"""
+    db_state = db_state or {}
+
+    def resolve_chars(ids):
+        names = []
+        for cid in ids:
+            found = next(
+                (c.get("name", cid) for lst in [
+                    [db_state.get("protagonist")] if db_state.get("protagonist") else [],
+                    db_state.get("supporting_characters", []),
+                    db_state.get("villains", []),
+                ] for c in lst if c and c.get("id") == cid), cid)
+            names.append(found)
+        return "、".join(names) if names else "（见大纲）"
+
+    def resolve_loc(lid):
+        for loc in db_state.get("locations", []):
+            if loc.get("id") == lid:
+                return loc.get("name", lid)
+        return lid or "（见大纲）"
+
+    def resolve_items(ids):
+        names = [next((i.get("name", iid) for i in db_state.get("items", []) if i.get("id") == iid), iid) for iid in ids]
+        return "、".join(names) if names else "无"
+
+    title = outline.get("title", f"第{chapter_num}章")
+    points = outline.get("plot_points", []) or []
+    emotional_tone = outline.get("emotional_tone", "")
+    cliffhanger = outline.get("cliffhanger", "")
+    expected_reaction = outline.get("expected_reader_reaction", "")
+    char_names = resolve_chars(outline.get("participating_characters", []))
+    loc_name = resolve_loc(outline.get("location_id", ""))
+    item_names = resolve_items(outline.get("key_items_used", []))
+
+    lines = [f"第 {chapter_num} 章：{title}"]
+    lines.append(f"出场人物：{char_names}  |  场景：{loc_name}  |  道具：{item_names}")
+    if emotional_tone:
+        lines.append(f"情绪基调：{emotional_tone}")
+    lines += ["", "── 剧情流程 ──", ""]
+
+    for i, p in enumerate(points, 1):
+        beat = p.get("beat", "") if isinstance(p, dict) else str(p)
+        subs = p.get("sub_beats", []) if isinstance(p, dict) else []
+        wc = p.get("suggested_expansion") if isinstance(p, dict) else None
+        wc_hint = f"（约 {wc} 字）" if wc else ""
+        lines.append(f"【{i}】{beat} {wc_hint}")
+        for s in subs:
+            lines.append(f"   · {s}")
+        lines.append("")
+
+    if cliffhanger:
+        lines += ["── 结尾钩子 ──", cliffhanger, ""]
+    if expected_reaction:
+        lines.append(f"预期读者反应：{expected_reaction}")
+        lines.append("")
+
+    lines += [
+        "情绪嗅觉描写（可选）：人名（情绪）：气味",
+        "微表情描写（可选）：人名：细节",
+        "伏笔埋设（可选）：道具/行为 → 后续呼应",
+    ]
+    return "\n".join(lines)
+
+
+def get_chapter_outline_preview(
+    book_dir: str | Path,
+    prompt_preset_id: str = "",
+) -> ActionResult:
+    """获取当前待写章节的细化大纲（格式化为可编辑模板文本）。"""
+    book_path = Path(book_dir)
+    meta = _load_book_meta(book_path)
+    goal = str(meta.get("main_story_goal", "")).strip()
+    preset = prompt_preset_id or str(meta.get("prompt_preset_id") or DEFAULT_PROMPT_PRESET_ID)
+
+    def _do():
+        loop = MainLoop(book_dir_path=str(book_path), main_story_goal=goal, prompt_preset_id=preset)
+        from workflows.chapter_pipeline import _ensure_plot_arc
+        from utils.story_context import story_context_for_plot
+        if not loop.plot_arc or loop.plot_arc_index >= len(loop.plot_arc):
+            with use_prompt_preset(preset):
+                from utils.llm_logging import use_llm_log_context
+                with use_llm_log_context(loop.book_dir, "outline_preview"):
+                    _ensure_plot_arc(loop, story_context_for_plot(loop.story_memory))
+        if loop.plot_arc and loop.plot_arc_index < len(loop.plot_arc):
+            text = _format_outline_as_template(loop.plot_arc[loop.plot_arc_index], loop.current_chapter_num, db_state=loop.db.get_state())
+        else:
+            text = f"【第{loop.current_chapter_num}章：待填写】\n\n核心事件：\n\n情绪落点与钩子：\n  结尾悬念："
+        # 同时检查是否已有保存的 user_override，优先展示
+        for plot_file in list_plot_files(book_path):
+            identity = parse_plot_range_identity(plot_file)
+            if identity and identity[0] == loop.current_volume_num:
+                fv, start, end = identity
+                if start <= loop.current_chapter_num <= end:
+                    data = load_json_file(plot_file, {})
+                    for entry in data.get("plot_arc", []):
+                        if entry.get("chapter_num") == loop.current_chapter_num and entry.get("user_override"):
+                            text = entry["user_override"]
+                    break
+        return {"outline_text": text, "chapter_num": loop.current_chapter_num}
+
+    return _capture_action(_do, message="细化大纲已生成。")
+
+
+def generate_chapter_with_outline(
+    book_dir: str | Path,
+    outline_text: str,
+    main_story_goal: str = "",
+    prompt_preset_id: str = "",
+    log_callback: Callable[[str], None] | None = None,
+) -> ActionResult:
+    """用用户审定的细化大纲生成下一章正文。"""
+    book_path = Path(book_dir)
+    meta = _load_book_meta(book_path)
+    goal = main_story_goal.strip() or str(meta.get("main_story_goal", "")).strip()
+    preset = prompt_preset_id or str(meta.get("prompt_preset_id") or DEFAULT_PROMPT_PRESET_ID)
+
+    def _do():
+        loop = MainLoop(book_dir_path=str(book_path), main_story_goal=goal, prompt_preset_id=preset)
+        if loop.check_volume_complete():
+            loop.start_new_volume()
+        chapter_payload = loop.generate_chapter(outline_override=outline_text)
+        loop.check_volume_complete()
+        return chapter_payload
+
+    return _capture_action(_do, message="已按细化大纲生成下一章。", log_callback=log_callback)
+
+
+def save_chapter_outline_override(book_dir: str | Path, override_text: str) -> ActionResult:
+    """将用户编辑后的细化大纲保存到 plot_arc 文件的对应章节条目中，生成时自动读取。"""
+    book_path = Path(book_dir)
+    meta = _load_book_meta(book_path)
+    goal = str(meta.get("main_story_goal", "")).strip()
+    preset = str(meta.get("prompt_preset_id") or DEFAULT_PROMPT_PRESET_ID)
+
+    def _do():
+        loop = MainLoop(book_dir_path=str(book_path), main_story_goal=goal, prompt_preset_id=preset)
+        ch_num = loop.current_chapter_num
+        vol_num = loop.current_volume_num
+        for plot_file in list_plot_files(book_path):
+            identity = parse_plot_range_identity(plot_file)
+            if not identity:
+                continue
+            fv, start, end = identity
+            if fv == vol_num and start <= ch_num <= end:
+                data = load_json_file(plot_file, {})
+                for entry in data.get("plot_arc", []):
+                    if entry.get("chapter_num") == ch_num:
+                        entry["user_override"] = override_text.strip()
+                        write_json_file(plot_file, data)
+                        print(f"✓ 第{ch_num}章细纲修改已保存至 {plot_file.name}")
+                        return
+                raise ValueError(f"{plot_file.name} 中未找到第{ch_num}章条目")
+        raise ValueError(f"未找到覆盖第{ch_num}章的 plot_arc 文件")
+
+    return _capture_action(_do, message="细纲修改已保存。")
+
+
+def rewrite_chapter_fragment(
+    book_dir: str | Path,
+    relative_path: str,
+    original_fragment: str,
+    instruction: str,
+    prompt_preset_id: str = "",
+    log_callback: Callable[[str], None] | None = None,
+) -> ActionResult:
+    """局部重写章节中的指定片段，经书评审核后替换回原文。"""
+    book_path = Path(book_dir)
+    meta = _load_book_meta(book_path)
+    preset = prompt_preset_id or str(meta.get("prompt_preset_id") or DEFAULT_PROMPT_PRESET_ID)
+
+    def _do():
+        chapter_path = resolve_relative_path(book_path, relative_path)
+        full_text = chapter_path.read_text(encoding="utf-8")
+        if original_fragment not in full_text:
+            raise ValueError("在章节中找不到该片段，请确认粘贴内容与正文完全一致（包含标点和空格）。")
+
+        world_setting = load_json_file(book_path / "world_setting.json", {})
+        novel_setting = (world_setting.get("novel_setting") or {})
+        db_state = get_database_for_book(book_path).get_state()
+        protagonist_name = (db_state.get("protagonist") or {}).get("name", "")
+
+        with use_prompt_preset(preset):
+            system_p = load_prompt_config("draft_smith_prompt", "system")
+        user_p = (
+            f"以下是当前章节的完整正文（供参考文风和前后文）：\n\n{full_text}\n\n"
+            f"---\n"
+            f"需要重写的片段：\n\n{original_fragment}\n\n"
+            f"---\n"
+            f"修改意见：{instruction}\n\n"
+            f"请仅输出重写后的片段文字，不要包含任何说明或章节标题。"
+            f"重写内容必须能无缝替换回原文对应位置，前后衔接自然。"
+        )
+        schema = {"type": "object", "properties": {"rewritten": {"type": "string"}}, "required": ["rewritten"]}
+
+        max_attempts = 3
+        replacement = ""
+        for attempt in range(max_attempts):
+            print(f"\n[E] 局部重写中...（尝试 {attempt+1}/{max_attempts}）")
+            result = gemini_client(system_p, user_p, schema)
+            replacement = result.get("rewritten", "").strip()
+            if not replacement:
+                continue
+
+            print("\n[I] 毒舌书评人正在审核局部重写...")
+            review = run_reader_review(
+                review_stage="chapter_draft",
+                content_to_review=replacement,
+                context_payload={"story_context": full_text, "instruction": instruction},
+                evaluation_focus="检查局部重写片段是否解决了修改意见，且与上下文衔接自然、风格一致。",
+            ) or {"decision": "PASS", "score": 3}
+            if is_review_passed(review):
+                print(f"✓ 审核通过 (评分: {review.get('score')}/5)")
+                break
+            print(f"⚠ 审核未通过：{review.get('review_summary','')[:80]}")
+            feedback = "\n".join(review.get("improvement_suggestions", []))
+            user_p = user_p + f"\n\n上次生成未通过审核，反馈：{feedback}\n请根据反馈重新生成。"
+        else:
+            print("⚠ 已达最大重试次数，使用最后一次结果")
+
+        if not replacement:
+            raise ValueError("重写片段为空，请检查输入。")
+
+        new_text = full_text.replace(original_fragment, replacement, 1)
+        write_text_file(chapter_path, new_text)
+        print(f"✓ 已替换片段并保存: {chapter_path.name}")
+        return {"replaced": True, "chapter": relative_path}
+
+    return _capture_action(_do, message="局部重写完成。", log_callback=log_callback)
+
+
+# ─── 短故事服务 ─────────────────────────────────────────────────────────────
+from workflows.short_story.pipeline import (
+    generate_outline as _ss_generate_outline,
+    generate_chapter as _ss_generate_chapter,
+    list_short_stories as _ss_list,
+    get_short_story_view as _ss_view,
+)
+
+
+def list_short_stories_service(output_dir: str | Path = "output") -> list[dict]:
+    return _ss_list(output_dir)
+
+
+def get_short_story_view_service(story_dir: str | Path) -> dict:
+    return _ss_view(story_dir)
+
+
+def create_short_story_outline(
+    output_dir: str | Path,
+    track: str,
+    target_words: int,
+    inspiration: str,
+    log_callback: Callable[[str], None] | None = None,
+) -> ActionResult:
+    def _do():
+        return _ss_generate_outline(str(output_dir), track, target_words, inspiration)
+    return _capture_action(_do, message="大纲已生成。", log_callback=log_callback)
+
+
+def generate_short_story_chapter(
+    story_dir: str | Path,
+    chapter_num: int,
+    log_callback: Callable[[str], None] | None = None,
+) -> ActionResult:
+    def _do():
+        return _ss_generate_chapter(str(story_dir), chapter_num)
+    return _capture_action(_do, message=f"第{chapter_num}章已生成。", log_callback=log_callback)

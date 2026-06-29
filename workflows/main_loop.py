@@ -104,13 +104,13 @@ class MainLoop:
         with use_prompt_preset(self.prompt_preset_id), use_llm_log_context(self.book_dir, "initialize"):
             run_initialization(self)
 
-    def generate_chapter(self) -> Dict[str, Any]:
-        """阶段2–4: 生成单章内容。返回本章的 chapter_num / title / content / plot_data。"""
+    def generate_chapter(self, outline_override: str = "") -> Dict[str, Any]:
+        """阶段2–4: 生成单章内容。outline_override 为用户审定的细化大纲，非空时作为首要创作指导。"""
         with use_prompt_preset(self.prompt_preset_id), use_llm_log_context(
             self.book_dir,
             f"generate_chapter_v{self.current_volume_num}_c{self.current_chapter_num}_g{self.current_global_chapter_num}",
         ):
-            return run_chapter_generation(self)
+            return run_chapter_generation(self, outline_override=outline_override)
 
     def check_volume_complete(self) -> bool:
         """检查当前卷 roadmap 是否已被章节 lore 标记完成。"""

@@ -3,6 +3,7 @@ from google.genai import types
 import json,os,sys
 import time
 from datetime import datetime
+from typing import Any
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 if _PROJECT_ROOT not in sys.path:
@@ -12,6 +13,9 @@ from utils.llm_logging import write_llm_run_log
 from utils.prompt_presets import load_prompt_template
 
 _client = None
+_GEMINI_HTTP_TIMEOUT_MS = int(os.getenv("GEMINI_HTTP_TIMEOUT_MS", "300000"))
+_GEMINI_MAX_RETRIES = max(1, int(os.getenv("GEMINI_MAX_RETRIES", "5")))
+_GEMINI_RETRY_DELAY_SECONDS = float(os.getenv("GEMINI_RETRY_DELAY_SECONDS", "3"))
 
 
 def _get_client():
@@ -23,6 +27,109 @@ def _get_client():
   _client = genai.Client(api_key=GEMINI_API_KEY)
   return _client
 
+
+def _to_jsonable(value: Any) -> Any:
+  if hasattr(value, "model_dump"):
+    return value.model_dump(mode="json")
+  return value
+
+
+def _extract_candidate_text(response: Any) -> str | None:
+  candidates = getattr(response, "candidates", None) or []
+  for candidate in candidates:
+    content = getattr(candidate, "content", None)
+    parts = getattr(content, "parts", None) or []
+    fragments: list[str] = []
+    for part in parts:
+      text = getattr(part, "text", None)
+      if isinstance(text, str) and text.strip():
+        fragments.append(text)
+    if fragments:
+      return "".join(fragments)
+  return None
+
+
+def _response_debug_meta(response: Any) -> dict[str, Any]:
+  candidates = getattr(response, "candidates", None) or []
+  return {
+    "candidate_count": len(candidates),
+    "finish_reasons": [str(getattr(candidate, "finish_reason", "")) for candidate in candidates],
+    "prompt_feedback": _to_jsonable(getattr(response, "prompt_feedback", None)),
+    "usage_metadata": _to_jsonable(getattr(response, "usage_metadata", None)),
+    "response_id": getattr(response, "response_id", None),
+    "model_version": getattr(response, "model_version", None),
+  }
+
+
+def _extract_response_payload(response: Any) -> tuple[Any, str | None]:
+  parsed = _to_jsonable(getattr(response, "parsed", None))
+  if parsed is not None:
+    if isinstance(parsed, str):
+      return json.loads(parsed), parsed
+    return parsed, json.dumps(parsed, ensure_ascii=False, indent=2)
+
+  response_text = getattr(response, "text", None)
+  if isinstance(response_text, str) and response_text.strip():
+    return json.loads(response_text), response_text
+
+  candidate_text = _extract_candidate_text(response)
+  if candidate_text:
+    return json.loads(candidate_text), candidate_text
+
+  debug = _response_debug_meta(response)
+  raise ValueError(
+    "Gemini returned no structured payload: response.parsed and response.text are both empty"
+    f" (candidate_count={debug['candidate_count']}, finish_reasons={debug['finish_reasons']},"
+    f" prompt_feedback={debug['prompt_feedback']})"
+  )
+
+
+def _is_retryable_llm_error(exc: Exception) -> bool:
+  # 优先看结构化状态码（google-genai 的 APIError 带 .code / .status）
+  code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+  try:
+    if code is not None and int(code) in (408, 429, 500, 502, 503, 504):
+      return True
+  except (TypeError, ValueError):
+    pass
+  status = str(getattr(exc, "status", "") or "").lower()
+  if status in ("unavailable", "resource_exhausted", "internal", "deadline_exceeded", "aborted"):
+    return True
+
+  message = str(exc).lower()
+  retryable_markers = (
+    "timeout",
+    "timed out",
+    "deadline exceeded",
+    "connection reset",
+    "connection aborted",
+    "remote protocol error",
+    "temporarily unavailable",
+    "service unavailable",
+    "currently unavailable",
+    "unavailable",
+    "overloaded",
+    "resource_exhausted",
+    "resource exhausted",
+    "internal server error",
+    "bad gateway",
+    "gateway timeout",
+    "server disconnected",
+    "http 408",
+    "http 429",
+    "http 500",
+    "http 502",
+    "http 503",
+    "http 504",
+    "408",
+    "429",
+    "500",
+    "502",
+    "503",
+    "504",
+  )
+  return any(marker in message for marker in retryable_markers)
+
 def gemini_client(system_prompt: str, user_prompt: str, response_schema: dict,temperature: float = 0.7) -> str:
   model = "gemini-3.1-pro-preview"
   started_at = datetime.now().isoformat(timespec="seconds")
@@ -31,41 +138,59 @@ def gemini_client(system_prompt: str, user_prompt: str, response_schema: dict,te
         system_instruction=system_prompt,
         response_schema=response_schema,
         temperature=temperature,
+        http_options=types.HttpOptions(timeout=_GEMINI_HTTP_TIMEOUT_MS),
     )
-  response_text = None
-  try:
-    response = _get_client().models.generate_content(
-      model=model,
-      contents=user_prompt,
-      config=config
-    )
-    response_text = response.text
-    result = json.loads(response_text)
-    write_llm_run_log(
-      system_prompt=system_prompt,
-      user_prompt=user_prompt,
-      response_schema=response_schema,
-      model=model,
-      temperature=temperature,
-      started_at=started_at,
-      started_monotonic=started_monotonic,
-      response_text=response_text,
-      parsed_response=result,
-    )
-    return result
-  except Exception as exc:
-    write_llm_run_log(
-      system_prompt=system_prompt,
-      user_prompt=user_prompt,
-      response_schema=response_schema,
-      model=model,
-      temperature=temperature,
-      started_at=started_at,
-      started_monotonic=started_monotonic,
-      response_text=response_text,
-      error=exc,
-    )
-    raise
+  last_exc = None
+  for attempt in range(1, _GEMINI_MAX_RETRIES + 1):
+    response_text = None
+    parsed_response = None
+    response_debug = None
+    try:
+      response = _get_client().models.generate_content(
+        model=model,
+        contents=user_prompt,
+        config=config
+      )
+      response_debug = _response_debug_meta(response)
+      result, response_text = _extract_response_payload(response)
+      parsed_response = result
+      write_llm_run_log(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        response_schema=response_schema,
+        model=model,
+        temperature=temperature,
+        started_at=started_at,
+        started_monotonic=started_monotonic,
+        response_text=response_text,
+        parsed_response=parsed_response,
+        response_debug=response_debug,
+      )
+      return result
+    except Exception as exc:
+      last_exc = exc
+      write_llm_run_log(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        response_schema=response_schema,
+        model=model,
+        temperature=temperature,
+        started_at=started_at,
+        started_monotonic=started_monotonic,
+        response_text=response_text,
+        parsed_response=parsed_response,
+        response_debug=response_debug,
+        error=exc,
+      )
+      if attempt >= _GEMINI_MAX_RETRIES or not _is_retryable_llm_error(exc):
+        raise
+      backoff = _GEMINI_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
+      print(
+        f"⚠ Gemini 请求失败（尝试 {attempt}/{_GEMINI_MAX_RETRIES}）：{exc}；"
+        f" {backoff:.0f} 秒后重试..."
+      )
+      time.sleep(backoff)
+  raise last_exc
 
 def load_prompt_config(template_name: str,type: str, **kwargs) -> str:
   template_config = load_prompt_template(template_name)

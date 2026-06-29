@@ -137,6 +137,19 @@ class Database:
             return {}
         return json.loads(s)
 
+    def _normalize_optional_ref(self, value: Any) -> str | None:
+        """将模型常见的空引用占位值归一化为 None。"""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized:
+                return None
+            if normalized.lower() in {"null", "none", "nil", "undefined"}:
+                return None
+            return normalized
+        return str(value)
+
     def get_state(self) -> Dict[str, Any]:
         """
         获取当前数据库状态
@@ -250,46 +263,86 @@ class Database:
 
     def update(self, updates: Dict[str, Any]):
         """
-        更新数据库
-        
-        Args:
-            updates: 更新数据
+        更新数据库。
+
+        采用「逐实体 SAVEPOINT」策略：每个角色/物品的状态增量各自包在一个
+        SAVEPOINT 里。若某条更新引用了不存在的实体（外键约束失败
+        sqlite3.IntegrityError），只回滚并跳过这一条、记录警告，不影响其余
+        合法更新，也不再 kill 整章。非外键类的结构性错误（格式非法等）仍然抛出。
         """
+        skipped: list[str] = []
+
         with self.conn:
             cursor = self.conn.cursor()
-            
+
             # 更新主角状态
             if "protagonist" in updates:
                 prot_updates = updates["protagonist"] or {}
                 if not isinstance(prot_updates, dict):
                     raise ValueError("database_updates.protagonist 必须是对象")
-                # 获取主角ID
                 cursor.execute("SELECT id FROM characters WHERE type = 'protagonist' LIMIT 1")
                 row = cursor.fetchone()
                 if row:
-                    self._apply_character_delta(row["id"], prot_updates, "database_updates.protagonist")
-            
+                    self._apply_in_savepoint(
+                        "prot",
+                        lambda: self._apply_character_delta(row["id"], prot_updates, "database_updates.protagonist"),
+                        skipped,
+                        f"主角({row['id']})状态",
+                    )
+
             # 更新其他角色状态
             if "characters_updates" in updates:
                 char_updates = updates["characters_updates"] or []
                 if not isinstance(char_updates, list):
                     raise ValueError("database_updates.characters_updates 必须是数组")
-                for char_update in char_updates:
+                for idx, char_update in enumerate(char_updates):
                     if not isinstance(char_update, dict):
                         raise ValueError("database_updates.characters_updates 的每一项都必须是对象")
                     char_id = char_update["id"]
-
-                    self._apply_character_delta(char_id, char_update, "database_updates.characters_updates")
+                    self._apply_in_savepoint(
+                        f"char{idx}",
+                        lambda cu=char_update, cid=char_id: self._apply_character_delta(cid, cu, "database_updates.characters_updates"),
+                        skipped,
+                        f"角色({char_id})状态",
+                    )
 
             # 更新物品位置或完整数据补丁
             if "items_updates" in updates:
                 item_updates = updates["items_updates"] or []
                 if not isinstance(item_updates, list):
                     raise ValueError("database_updates.items_updates 必须是数组")
-                for item_update in item_updates:
+                for idx, item_update in enumerate(item_updates):
                     if not isinstance(item_update, dict):
                         raise ValueError("database_updates.items_updates 的每一项都必须是对象")
-                    self._apply_item_delta(item_update)
+                    self._apply_in_savepoint(
+                        f"item{idx}",
+                        lambda iu=item_update: self._apply_item_delta(iu),
+                        skipped,
+                        f"物品({item_update.get('id', '?')})状态",
+                    )
+
+        if skipped:
+            print(f"⚠ 数据库更新跳过 {len(skipped)} 条（引用了不存在的实体，外键约束失败）：")
+            for s in skipped:
+                print(f"    - {s}")
+
+    def _apply_in_savepoint(self, name: str, fn, skipped: list, label: str) -> None:
+        """在独立 SAVEPOINT 中执行一条实体更新。外键失败则回滚并记录，其余错误抛出。"""
+        safe_name = f"sp_{name}"
+        cursor = self.conn.cursor()
+        cursor.execute(f"SAVEPOINT {safe_name}")
+        try:
+            fn()
+        except sqlite3.IntegrityError as e:
+            cursor.execute(f"ROLLBACK TO SAVEPOINT {safe_name}")
+            cursor.execute(f"RELEASE SAVEPOINT {safe_name}")
+            skipped.append(f"{label}：{e}")
+        except Exception:
+            cursor.execute(f"ROLLBACK TO SAVEPOINT {safe_name}")
+            cursor.execute(f"RELEASE SAVEPOINT {safe_name}")
+            raise
+        else:
+            cursor.execute(f"RELEASE SAVEPOINT {safe_name}")
 
     def _apply_character_delta(self, character_id: str, updates: Dict[str, Any], path: str):
         if "new_status" in updates:
@@ -445,17 +498,19 @@ class Database:
     ):
         """更新物品位置或持有人。"""
         cursor = self.conn.cursor()
-        resolved_type = placement_type or ("inventory_item" if owner_id else "world_object")
+        normalized_owner_id = self._normalize_optional_ref(owner_id)
+        normalized_location_id = self._normalize_optional_ref(location_id)
+        resolved_type = placement_type or ("inventory_item" if normalized_owner_id else "world_object")
         cursor.execute("DELETE FROM character_inventory WHERE item_id = ?", (item_id,))
         cursor.execute("""
             INSERT OR REPLACE INTO item_placement (item_id, placement_type, location_id, owner_id)
             VALUES (?, ?, ?, ?)
-        """, (item_id, resolved_type, location_id, owner_id))
-        if owner_id:
+        """, (item_id, resolved_type, normalized_location_id, normalized_owner_id))
+        if normalized_owner_id:
             cursor.execute("""
                 INSERT OR IGNORE INTO character_inventory (character_id, item_id, quantity)
                 VALUES (?, ?, 1)
-            """, (owner_id, item_id))
+            """, (normalized_owner_id, item_id))
 
     def _update_item_data(self, item_id: str, data_updates: Dict[str, Any]):
         """合并更新物品完整 JSON 数据。"""
@@ -603,10 +658,14 @@ class Database:
         """从状态字典更新角色状态"""
         cursor = self.conn.cursor()
         
-        location_id = status.get("location_id")
+        location_id = self._normalize_optional_ref(status.get("location_id"))
         state = status.get("state", "active")
         stats = status.get("stats", {})
-        inventory_ids = status.get("inventory_ids", [])
+        inventory_ids = [
+            normalized_item_id
+            for item_id in status.get("inventory_ids", [])
+            if (normalized_item_id := self._normalize_optional_ref(item_id)) is not None
+        ]
         
         # 更新状态表
         cursor.execute("""
@@ -626,12 +685,15 @@ class Database:
         if "social_relations" in status:
             cursor.execute("DELETE FROM character_relations WHERE character_id = ?", (character_id,))
             for rel in status["social_relations"]:
+                target_id = self._normalize_optional_ref(rel.get("target_id", ""))
+                if not target_id:
+                    continue
                 cursor.execute("""
                     INSERT INTO character_relations (character_id, target_id, relation, trust_level)
                     VALUES (?, ?, ?, ?)
                 """, (
                     character_id,
-                    rel.get("target_id", ""),
+                    target_id,
                     rel.get("relation", ""),
                     rel.get("trust_level", 50)
                 ))

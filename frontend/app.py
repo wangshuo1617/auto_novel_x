@@ -15,19 +15,30 @@ from config import GEMINI_API_KEY
 from frontend.services import (
     create_book_with_initialization,
     create_prompt_preset_copy,
+    create_short_story_outline,
+    delete_book,
+    generate_chapter_with_outline,
+    generate_short_story_chapter,
     get_book_health_report,
+    get_chapter_outline_preview,
     get_database_table,
     get_book_view,
     get_generation_state_history,
     get_llm_run_log_history,
     get_prompt_preset_detail,
+    get_short_story_view_service,
     list_books,
     list_database_tables,
     list_prompt_preset_summaries,
+    list_short_stories_service,
     matching_lore_for_chapter,
     read_artifact_text,
+    regenerate_artifact,
+    is_regeneratable_artifact,
+    rewrite_chapter_fragment,
     run_book_action,
     save_artifact_text,
+    save_chapter_outline_override,
     save_database_table,
     save_prompt_template_config,
     update_book_prompt_preset,
@@ -41,13 +52,25 @@ PROMPT_EDITOR_OPEN_KEY = "prompt-editor-open"
 
 def main() -> None:
     st.title("Auto Novel X 创作控制台")
-    st.caption("在一个界面里创建书、选择 Prompt 预设、生成章节、阅读小说、编辑产物和检查数据库状态。")
     if not GEMINI_API_KEY:
         st.warning("未检测到 GEMINI_API_KEY。当前可以浏览和编辑产物，但生成相关按钮会被禁用。")
 
     live_log_placeholder = st.empty()
     _render_prompt_editor_button()
     output_dir = st.sidebar.text_input("输出目录", value="output")
+
+    # ── 顶层模式切换 ──────────────────────────────────────────────────────────
+    mode_tabs = st.tabs(["📖 小说", "📝 短故事"])
+
+    with mode_tabs[0]:
+        _render_novel_mode(output_dir, live_log_placeholder)
+
+    with mode_tabs[1]:
+        _render_short_story_tab(output_dir, live_log_placeholder)
+
+
+def _render_novel_mode(output_dir: str, live_log_placeholder) -> None:
+    """原有小说模式——原样保留。"""
     prompt_presets = list_prompt_preset_summaries()
     books = list_books(output_dir)
 
@@ -72,7 +95,11 @@ def main() -> None:
     _maybe_render_prompt_editor_dialog(selected_book_path, book_view, prompt_presets)
 
     st.subheader(summary["title"])
+    if summary.get("tagline"):
+        st.caption(summary["tagline"])
     st.write(summary["logline"] or "暂无一句话简介。")
+    if summary.get("blurb"):
+        st.markdown(summary["blurb"])
 
     _render_metrics(summary)
     _render_action_bar(
@@ -83,7 +110,7 @@ def main() -> None:
     )
     _render_last_action()
 
-    tabs = st.tabs(["总览", "生成控制", "章节阅读", "产物编辑", "数据库", "健康检查/日志", "Prompt 配置"])
+    tabs = st.tabs(["总览", "生成控制", "章节阅读", "产物编辑", "数据库", "健康检查/日志", "Prompt 配置", "书籍操作"])
     with tabs[0]:
         _render_overview(book_view)
     with tabs[1]:
@@ -96,13 +123,15 @@ def main() -> None:
     with tabs[2]:
         _render_chapter_reader(selected_book_path, book_view)
     with tabs[3]:
-        _render_artifact_editor(selected_book_path, book_view)
+        _render_artifact_editor(selected_book_path, book_view, live_log_placeholder)
     with tabs[4]:
         _render_database_tab(selected_book_path, book_view)
     with tabs[5]:
         _render_health_and_logs_tab(selected_book_path)
     with tabs[6]:
         _render_prompt_binding_tab(selected_book_path, book_view, prompt_presets)
+    with tabs[7]:
+        _render_book_operations_tab(selected_book_path, book_view)
 
 
 def _render_create_book_form(output_dir: str, live_log_placeholder, prompt_presets: list[dict[str, Any]]) -> None:
@@ -168,6 +197,149 @@ def _render_prompt_editor_dialog(book_path: str | None, book_view: dict | None, 
         st.rerun()
 
 
+def _render_short_story_tab(output_dir: str, live_log_placeholder) -> None:
+    """短故事模式：新建大纲 → 分步确认 → 逐章生成。"""
+    st.markdown("### 📝 短故事")
+    stories = list_short_stories_service(output_dir)
+
+    # ── 新建短故事 ────────────────────────────────────────────────────────────
+    with st.expander("🆕 新建短故事", expanded=not stories):
+        track = st.radio("创作轨道", ["A — IP回响（文艺深度，30k-50k字）", "B — 高流量爆款（6k-80k字）"],
+                         key="ss-track", horizontal=True)
+        track_char = "A" if track.startswith("A") else "B"
+        target_words = st.number_input("预期总字数", min_value=6000, max_value=80000, value=20000, step=1000, key="ss-words")
+        inspiration = st.text_area("初始灵感/关键词", height=100, key="ss-inspiration",
+                                   placeholder="例如：现代女企业家穿越明朝，用商业思维降维打击权贵")
+        outline_log = st.empty()
+        if st.button("生成大纲", key="ss-gen-outline", disabled=not GEMINI_API_KEY or not inspiration.strip()):
+            try:
+                result = _run_live_action(
+                    outline_log, heading="正在生成大纲...",
+                    runner=lambda lc: create_short_story_outline(
+                        output_dir, track_char, int(target_words), inspiration, log_callback=lc))
+            except Exception as exc:
+                _set_last_action(kind="error", message=str(exc), logs=traceback.format_exc())
+            else:
+                _set_last_action_result(result)
+            st.rerun()
+
+    _render_last_action()
+
+    if not stories:
+        return
+
+    # ── 选择已有短故事 ─────────────────────────────────────────────────────────
+    st.markdown("---")
+    story_opts = {s["path"]: f"《{s['title']}》 轨道{s['track']} {s['completed_chapters']}/{s['total_chapters']}章" for s in stories}
+    selected_path = st.selectbox("选择短故事", options=list(story_opts.keys()),
+                                 format_func=lambda p: story_opts[p], key="ss-selector")
+    if not selected_path:
+        return
+
+    view = get_short_story_view_service(selected_path)
+    meta = view["meta"]
+    outline = view["outline"]
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("轨道", f"{'A — IP回响' if meta.get('track')=='A' else 'B — 高流量'}")
+    col2.metric("进度", f"{meta.get('completed_chapters',0)} / {meta.get('total_chapters',0)} 章")
+    col3.metric("目标字数", f"{meta.get('target_words',0):,}")
+
+    if outline.get("logline"):
+        st.caption(f"**一句话简介**：{outline['logline']}")
+    if outline.get("market_validation"):
+        st.caption(f"**市场校验**：{outline['market_validation']}")
+
+    # ── 大纲预览 + 生成下一章 ──────────────────────────────────────────────────
+    tabs = st.tabs(["📋 大纲", "📖 阅读", "⭐ 质检报告"])
+
+    with tabs[0]:
+        chapters_data = outline.get("chapters", [])
+        for ch in chapters_data:
+            n = ch.get("chapter_num", "?")
+            done = n <= meta.get("completed_chapters", 0)
+            icon = "✅" if done else "⬜"
+            with st.expander(f"{icon} 第{n}章《{ch.get('title', '')}》 ~{ch.get('estimated_words',0)}字", expanded=False):
+                st.write(ch.get("outline", ""))
+                st.caption(f"🎯 {ch.get('hook', '')}")
+
+        next_ch = meta.get("completed_chapters", 0) + 1
+        if next_ch <= meta.get("total_chapters", 0):
+            ch_log = st.empty()
+            if st.button(f"▶ 生成第{next_ch}章", key=f"ss-gen-ch-{selected_path}",
+                         disabled=not GEMINI_API_KEY, type="primary"):
+                try:
+                    result = _run_live_action(
+                        ch_log, heading=f"正在生成第{next_ch}章...",
+                        runner=lambda lc: generate_short_story_chapter(selected_path, next_ch, log_callback=lc))
+                except Exception as exc:
+                    _set_last_action(kind="error", message=str(exc), logs=traceback.format_exc())
+                else:
+                    _set_last_action_result(result)
+                st.rerun()
+        else:
+            st.success("🎉 全部章节已生成完毕！")
+
+    with tabs[1]:
+        chapter_files = view.get("chapters", [])
+        if not chapter_files:
+            st.info("还没有生成任何章节。")
+        else:
+            sel_ch = st.selectbox("选择章节", [c["name"] for c in chapter_files], key=f"ss-read-{selected_path}")
+            if sel_ch:
+                ch_path = next(c["path"] for c in chapter_files if c["name"] == sel_ch)
+                st.markdown(Path(ch_path).read_text(encoding="utf-8"))
+
+    with tabs[2]:
+        review_files = view.get("reviews", [])
+        if not review_files:
+            st.info("还没有质检报告。")
+        else:
+            sel_rv = st.selectbox("选择质检报告", [r["name"] for r in review_files], key=f"ss-review-{selected_path}")
+            if sel_rv:
+                rv_path = next(r["path"] for r in review_files if r["name"] == sel_rv)
+                import json as _json
+                rv = _json.loads(Path(rv_path).read_text(encoding="utf-8"))
+                passed = rv.get("pass_gate", False)
+                st.markdown(f"**质检结果**：{'✅ 通过' if passed else '❌ 未通过'}")
+                scores = rv.get("metrics_scores", {})
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("节奏紧凑", scores.get("pacing", "-"))
+                c2.metric("剧情跌宕", scores.get("plot_twists", "-"))
+                c3.metric("情感张力", scores.get("emotional_tension", "-"))
+                c4.metric("沉浸感", scores.get("immersion", "-"))
+                cp = rv.get("commercial_potential", {})
+                st.caption(f"改编方向：{cp.get('best_adaptation_format','-')} | 激励活动：{cp.get('target_incentive_plan','-')}")
+                if not passed and rv.get("feedback_for_rewrite"):
+                    st.warning(rv["feedback_for_rewrite"])
+
+    # ── Prompt 配置 ────────────────────────────────────────────────────────────
+    _render_short_story_prompt_editor()
+
+
+def _render_short_story_prompt_editor() -> None:
+    PROMPT_DIR = Path(__file__).parent.parent / "prompt_presets" / "short_story"
+    AGENTS = [
+        ("outline_concept_prompt", "📋 选题大纲策划"),
+        ("content_generation_prompt", "✍️ 正文创作"),
+        ("review_alignment_prompt", "⭐ 合规评估"),
+    ]
+    with st.expander("⚙️ 短故事 Prompt 配置", expanded=False):
+        for fname, label in AGENTS:
+            fpath = PROMPT_DIR / f"{fname}.json"
+            data = json.loads(fpath.read_text(encoding="utf-8"))
+            st.markdown(f"**{label}**")
+            with st.form(key=f"ss-prompt-{fname}"):
+                new_sys = st.text_area("system_prompt", value=data.get("system_prompt", ""), height=200, key=f"{fname}-sys")
+                new_usr = st.text_area("user_prompt", value=data.get("user_prompt", ""), height=150, key=f"{fname}-usr")
+                if st.form_submit_button("保存"):
+                    data["system_prompt"] = new_sys
+                    data["user_prompt"] = new_usr
+                    fpath.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+                    st.success(f"{label} 已保存")
+            st.divider()
+
+
 def _render_book_selector(books) -> str | None:
     book_map = {summary.path: summary for summary in books}
     selected = st.sidebar.selectbox(
@@ -176,6 +348,11 @@ def _render_book_selector(books) -> str | None:
         index=_default_book_index(list(book_map.keys())),
         format_func=lambda path: f"{book_map[path].title} ({book_map[path].chapter_count} 章)",
     )
+    # 切换书籍时清空目标输入的 session_state，避免复用上一本的全书目标
+    prev = st.session_state.get("selected_book_path")
+    if prev != selected:
+        for key in ("tab-main-story-goal", "sidebar-main-story-goal"):
+            st.session_state.pop(key, None)
     st.session_state["selected_book_path"] = selected
     return selected
 
@@ -192,7 +369,7 @@ def _render_metrics(summary: dict) -> None:
 def _render_action_bar(book_path: str, default_goal: str, prompt_preset_id: str, live_log_placeholder) -> None:
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 快速控制")
-    goal = st.sidebar.text_input("生成时使用的全书目标", value=default_goal, key="sidebar-main-story-goal")
+    goal = st.sidebar.text_input("生成时使用的全书目标", value=default_goal, key=f"sidebar-main-story-goal-{hash(book_path)}")
     st.sidebar.caption(f"当前 Prompt 预设：{prompt_preset_id}")
 
     col1, col2 = st.sidebar.columns(2)
@@ -204,15 +381,97 @@ def _render_action_bar(book_path: str, default_goal: str, prompt_preset_id: str,
 
 def _render_generation_tab(book_path: str, default_goal: str, prompt_preset_id: str, live_log_placeholder) -> None:
     st.markdown("### 生成控制")
-    st.write("这里直接调用现有工作流；适合生成下一章或手动开启新卷。")
     st.caption(f"当前书籍将使用 Prompt 预设：{prompt_preset_id}")
 
-    goal = st.text_input("全书目标", value=default_goal, key="tab-main-story-goal")
-    col1, col2 = st.columns(2)
-    if col1.button("生成下一章", key="tab-generate-chapter", use_container_width=True, disabled=not GEMINI_API_KEY):
+    goal = st.text_input("全书目标", value=default_goal, key=f"tab-main-story-goal-{hash(book_path)}")
+
+    # ── 两步生成：先预览细纲，确认后再生成正文 ──────────────────────────────
+    st.markdown("#### 生成下一章（推荐：先预览细纲）")
+    pending_key = "pending_chapter_outline"
+
+    col_preview, col_confirm, col_skip = st.columns(3)
+    if col_preview.button("① 预览细纲", key="btn-preview-outline",
+                          use_container_width=True, disabled=not GEMINI_API_KEY):
+        result = _run_live_action(
+            live_log_placeholder,
+            heading="正在生成细化大纲...",
+            runner=lambda log_callback: get_chapter_outline_preview(
+                book_path, prompt_preset_id=prompt_preset_id
+            ),
+        )
+        if result.success and result.payload and result.payload.get("outline_text"):
+            st.session_state[pending_key] = result.payload["outline_text"]
+        else:
+            _set_last_action(kind="error", message=result.message, logs=result.logs)
+        st.rerun()
+
+    if col_skip.button("直接生成（不预览细纲）", key="tab-generate-chapter",
+                       use_container_width=True, disabled=not GEMINI_API_KEY):
+        st.session_state.pop(pending_key, None)
         _run_action(book_path, "generate_chapter", goal, prompt_preset_id, live_log_placeholder)
-    if col2.button("开始新卷", key="tab-start-new-volume", use_container_width=True, disabled=not GEMINI_API_KEY):
+
+    # 细纲预览 / 编辑区
+    if pending_key in st.session_state:
+        st.markdown("##### 细化大纲（可直接编辑后确认）")
+        edited = st.text_area(
+            "编辑细化大纲",
+            value=st.session_state[pending_key],
+            height=420,
+            key="outline-edit-area",
+            label_visibility="collapsed",
+        )
+        c1, c2 = st.columns(2)
+        if c1.button("② 确认，按此大纲生成正文", key="btn-confirm-outline",
+                     use_container_width=True, disabled=not GEMINI_API_KEY, type="primary"):
+            try:
+                result = _run_live_action(
+                    live_log_placeholder,
+                    heading="正在按细化大纲生成正文...",
+                    runner=lambda log_callback: generate_chapter_with_outline(
+                        book_path,
+                        outline_text=edited,
+                        main_story_goal=goal,
+                        prompt_preset_id=prompt_preset_id,
+                        log_callback=log_callback,
+                    ),
+                )
+            except Exception as exc:
+                _set_last_action(kind="error", message=str(exc), logs=traceback.format_exc())
+            else:
+                _set_last_action_result(result)
+            st.session_state.pop(pending_key, None)
+            st.rerun()
+        if c2.button("保存细纲修改", key="btn-save-outline", use_container_width=True):
+            try:
+                save_result = save_chapter_outline_override(book_path, edited)
+                _set_last_action(kind="success" if save_result.success else "error",
+                                 message=save_result.message, logs=save_result.logs)
+            except Exception as exc:
+                _set_last_action(kind="error", message=str(exc), logs=traceback.format_exc())
+            st.rerun()
+        if st.button("放弃细纲", key="btn-discard-outline"):
+            st.session_state.pop(pending_key, None)
+            st.rerun()
+
+    # ── 开始新卷 / 手动连续生成（保留原有功能）──────────────────────────────
+    st.markdown("---")
+    col_newvol, _ = st.columns(2)
+    if col_newvol.button("开始新卷", key="tab-start-new-volume",
+                         use_container_width=True, disabled=not GEMINI_API_KEY):
         _run_action(book_path, "start_new_volume", goal, prompt_preset_id, live_log_placeholder)
+
+    st.markdown("#### 手动连续生成")
+    st.caption("适合想一次推进少量章节时使用。数量限制为 2-5 章，系统会逐章沿用现有工作流。")
+    batch_col1, batch_col2 = st.columns([1, 2])
+    chapter_count = batch_col1.number_input(
+        "连续生成章数", min_value=2, max_value=5, value=2, step=1, key="tab-generate-chapter-count",
+    )
+    if batch_col2.button("按数量连续生成", key="tab-generate-chapters",
+                         use_container_width=True, disabled=not GEMINI_API_KEY):
+        _run_action(
+            book_path, "generate_chapters", goal, prompt_preset_id, live_log_placeholder,
+            chapter_count=int(chapter_count),
+        )
 
 
 def _render_overview(book_view: dict) -> None:
@@ -228,10 +487,15 @@ def _render_overview(book_view: dict) -> None:
             {
                 "book_title": business.get("book_title", ""),
                 "selected_genre": business.get("selected_genre", ""),
+                "tagline": business.get("tagline", ""),
                 "logline": business.get("logline", ""),
+                "blurb": business.get("blurb", ""),
+                "unique_selling_point": business.get("unique_selling_point", ""),
+                "click_moment": business.get("click_moment", ""),
                 "prompt_preset": book_view.get("prompt_preset", {}),
                 "golden_finger": novel_setting.get("golden_finger", {}),
                 "reader_expectation": novel_setting.get("reader_expectation", {}),
+                "ending_blueprint": novel_setting.get("ending_blueprint", {}),
             }
         )
     with right:
@@ -270,15 +534,60 @@ def _render_chapter_reader(book_path: str, book_view: dict) -> None:
         st.markdown(f"#### 阅读视图 <span style='font-size:0.9rem;font-weight:400;color:#6b7280;'>（约 {chapter_word_count} 字）</span>", unsafe_allow_html=True)
         st.markdown(chapter_content)
     with right:
-        st.markdown("#### 原始 Markdown")
-        st.code(chapter_content, language="markdown")
         if related_lore:
             st.markdown("#### 对应档案")
             lore_content = read_artifact_text(book_path, related_lore)
             try:
-                st.json(json.loads(lore_content))
+                lore = json.loads(lore_content)
+                if lore.get("summary_text"):
+                    st.caption("**本章摘要**")
+                    st.write(lore["summary_text"])
+                if lore.get("semantic_tags"):
+                    st.caption("**标签**：" + " · ".join(lore["semantic_tags"]))
+                if lore.get("character_status_changes"):
+                    st.caption("**人物状态变化**")
+                    for line in lore["character_status_changes"]:
+                        st.write(f"- {line}")
+                opened = (lore.get("plot_threads") or {}).get("opened", [])
+                if opened:
+                    st.caption("**新开线索**")
+                    for t in opened:
+                        st.write(f"- {t.get('description', '')}")
+                with st.expander("完整档案 JSON", expanded=False):
+                    st.json(lore)
             except json.JSONDecodeError:
                 st.code(lore_content, language="json")
+        with st.expander("原始 Markdown（复制用）", expanded=False):
+            st.code(chapter_content, language="markdown")
+        _render_fragment_rewrite(book_path, selected_chapter)
+
+
+
+
+def _render_fragment_rewrite(book_path: str, selected_chapter: str) -> None:
+    with st.expander("✏️ 局部重写（选中片段 + 修改意见）", expanded=False):
+        st.caption("从正文中复制不满意的段落，粘贴到下方，填写修改意见后点击局部重写。")
+        fragment = st.text_area("需要修改的片段（从正文完整复制）", height=160, key=f"frag-{selected_chapter}")
+        instruction = st.text_input("修改意见", placeholder="例如：男主反应太速食，改为控制欲波动而非直给", key=f"instr-{selected_chapter}")
+        log_area = st.empty()
+        if st.button("局部重写", key=f"frag-rewrite-{selected_chapter}", disabled=not GEMINI_API_KEY or not fragment.strip()):
+            if not instruction.strip():
+                st.warning("请填写修改意见。")
+            else:
+                try:
+                    result = _run_live_action(
+                        log_area, heading="局部重写中...",
+                        runner=lambda lc: rewrite_chapter_fragment(
+                            book_path, selected_chapter, fragment, instruction,
+                            prompt_preset_id=st.session_state.get(f"book-preset-{hash(book_path)}", ""),
+                            log_callback=lc,
+                        ),
+                    )
+                except Exception as exc:
+                    _set_last_action(kind="error", message=str(exc), logs=traceback.format_exc())
+                else:
+                    _set_last_action_result(result)
+                st.rerun()
 
 
 def _chapter_character_count(chapter_content: str) -> int:
@@ -289,7 +598,7 @@ def _chapter_character_count(chapter_content: str) -> int:
     return sum(1 for char in content if not char.isspace())
 
 
-def _render_artifact_editor(book_path: str, book_view: dict) -> None:
+def _render_artifact_editor(book_path: str, book_view: dict, live_log_placeholder) -> None:
     artifact_catalog = book_view["artifact_catalog"]
     artifact_options: list[str] = []
     labels: dict[str, str] = {}
@@ -333,6 +642,40 @@ def _render_artifact_editor(book_path: str, book_view: dict) -> None:
     with preview_right:
         st.markdown("#### 文件信息")
         st.code(selected_artifact, language="text")
+        can_regen = is_regeneratable_artifact(selected_artifact)
+        regenerate_clicked = st.button(
+            "重新生成当前产物",
+            key=f"artifact-regenerate-{selected_artifact}",
+            use_container_width=True,
+            disabled=not can_regen,
+        )
+        if not can_regen:
+            st.caption("仅支持重生成 world_setting.json / .md 和章节正文。")
+        # 就近渲染实时日志：章节/总纲重生成是长任务，日志必须显示在按钮下方。
+        # 全局 live_log_placeholder 在所有 tab 之上，在本 tab 内点击时用户看不到它刷新，
+        # 会误以为"没执行"。这里用本地占位符让进度就近可见。
+        regenerate_log_placeholder = st.empty()
+        if regenerate_clicked:
+            try:
+                result = _run_live_action(
+                    regenerate_log_placeholder,
+                    heading=f"正在重生成 {selected_artifact}...",
+                    runner=lambda log_callback: regenerate_artifact(
+                        book_path,
+                        selected_artifact,
+                        prompt_preset_id=str(book_view.get("summary", {}).get("prompt_preset_id", "default")),
+                        log_callback=log_callback,
+                    ),
+                )
+            except Exception as exc:
+                _set_last_action(
+                    kind="error",
+                    message=str(exc),
+                    logs=traceback.format_exc(),
+                )
+            else:
+                _set_last_action_result(result)
+            st.rerun()
 
     if submitted:
         try:
@@ -540,6 +883,46 @@ def _render_prompt_binding_tab(book_path: str, book_view: dict, prompt_presets: 
             st.rerun()
 
 
+def _render_book_operations_tab(book_path: str, book_view: dict) -> None:
+    summary = book_view["summary"]
+    st.markdown("### 书籍操作")
+    st.write("这里集中放置书籍级操作。当前提供删除书籍，后续可继续扩展更多维护动作。")
+
+    st.markdown("#### 当前书籍")
+    st.json(
+        {
+            "title": summary["title"],
+            "path": book_path,
+            "chapter_count": summary["chapter_count"],
+            "volume_count": summary["volume_count"],
+            "artifact_count": summary["artifact_count"],
+            "updated_at": summary["updated_at"],
+        }
+    )
+
+    with st.expander("危险操作", expanded=True):
+        st.warning("删除书籍会移除当前书籍目录下的全部章节、设定、数据库和日志文件，且无法恢复。")
+        confirmed = st.checkbox(
+            f"我确认删除《{summary['title']}》及其全部文件",
+            key=f"confirm-delete-book-{summary['id']}",
+        )
+        if st.button(
+            "删除书籍",
+            key=f"delete-book-{summary['id']}",
+            use_container_width=True,
+            disabled=not confirmed,
+        ):
+            try:
+                result = delete_book(book_path)
+            except Exception as exc:
+                _set_last_action(kind="error", message=f"删除书籍失败：{exc}", logs=traceback.format_exc())
+            else:
+                if st.session_state.get("selected_book_path") == book_path:
+                    st.session_state.pop("selected_book_path", None)
+                _set_last_action(kind="success", message=f"已删除书籍：{result['title']}。", logs="")
+                st.rerun()
+
+
 def _render_prompt_editor(book_path: str | None, book_view: dict | None, prompt_presets: list[dict[str, Any]]) -> None:
     st.markdown("### Prompt 预设工作区")
     st.write("可以在这里维护多套 agent Prompt，并编辑各套预设的具体模板。")
@@ -687,7 +1070,15 @@ def _render_last_action() -> None:
             st.code(action["logs"], language="text")
 
 
-def _run_action(book_path: str, action: str, goal: str, prompt_preset_id: str, live_log_placeholder) -> None:
+def _run_action(
+    book_path: str,
+    action: str,
+    goal: str,
+    prompt_preset_id: str,
+    live_log_placeholder,
+    *,
+    chapter_count: int = 1,
+) -> None:
     try:
         result = _run_live_action(
             live_log_placeholder,
@@ -696,6 +1087,7 @@ def _run_action(book_path: str, action: str, goal: str, prompt_preset_id: str, l
                 book_path,
                 action,
                 main_story_goal=goal,
+                chapter_count=chapter_count,
                 prompt_preset_id=prompt_preset_id,
                 log_callback=log_callback,
             ),

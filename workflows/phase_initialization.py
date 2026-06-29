@@ -6,6 +6,7 @@
 import json
 
 from agents import ArcDirector, ElementDesigner, WorldArchitect
+from utils.book_artifacts import infer_main_story_goal_from_world_setting
 from workflows.review_utils import is_review_passed, run_reader_review
 
 
@@ -59,15 +60,22 @@ def _run_world_architect(loop) -> None:
         json.dump(loop.world_setting, f, ensure_ascii=False, indent=2)
     print(f"✓ 世界观已保存（JSON格式）: {world_json_file}")
 
+    if not str(loop.main_story_goal).strip():
+        loop.main_story_goal = infer_main_story_goal_from_world_setting(loop.world_setting)
+        if loop.main_story_goal:
+            print(f"✓ 已自动生成全书目标：{loop.main_story_goal}")
+
     business = loop.world_setting.get("business_analysis", {})
-    md_content = _business_markdown(business)
+    novel_setting = loop.world_setting.get("novel_setting", {})
+    md_content = _business_markdown(business, novel_setting)
     world_md_file = loop.book_dir / "world_setting.md"
     with open(world_md_file, "w", encoding="utf-8") as f:
         f.write(md_content)
     print(f"✓ 商业分析已保存（Markdown格式）: {world_md_file}")
 
 
-def _business_markdown(business: dict) -> str:
+def _business_markdown(business: dict, novel_setting: dict) -> str:
+    ending = novel_setting.get("ending_blueprint", {}) if isinstance(novel_setting, dict) else {}
     return f"""# 世界观设定白皮书
 
 ## 1. 商业定位分析
@@ -75,7 +83,22 @@ def _business_markdown(business: dict) -> str:
 * **选定赛道**：{business.get('selected_genre', '')}
 * **决策理由**：{business.get('decision_reasoning', '')}
 * **拟定书名**：《{business.get('book_title', '')}》
+* **全书目标**：{business.get('main_story_goal', '')}
+* **短钩子文案**：{business.get('tagline', '')}
 * **一句话简介**：{business.get('logline', '')}
+* **榜单简介文案**：{business.get('blurb', '')}
+* **独特卖点**：{business.get('unique_selling_point', '')}
+* **刷榜点击点**：{business.get('click_moment', '')}
+
+## 2. 结构化终局设计
+
+* **女主最终状态**：{ending.get('protagonist_final_state', '')}
+* **核心关系结局**：{ending.get('relationship_final_state', '')}
+* **世界秩序结局**：{ending.get('world_order_final_state', '')}
+* **终极冲突收束**：{ending.get('final_conflict_resolution', '')}
+* **终局情绪回报**：{ending.get('emotional_payoff', '')}
+* **终章画面钩子**：{ending.get('final_scene_hook', '')}
+* **必须回收的伏笔/线索**：{", ".join(ending.get('must_payoff_threads', [])) if isinstance(ending.get('must_payoff_threads', []), list) else ending.get('must_payoff_threads', '')}
 
 ---
 *注：完整的小说设定部分请查看 world_setting.json 文件*

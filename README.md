@@ -74,7 +74,8 @@ streamlit run frontend/app.py
 - 新建并初始化书籍
 - 通过侧边栏顶部按钮打开 Prompt 编辑弹窗，新建多套 Prompt 预设，并编辑每个 agent 的 prompt / schema
 - 新建书籍时选择 Prompt 预设，并在主区域的 Prompt 配置 tab 中为当前书籍切换绑定预设
-- 生成下一章 / 手动开启新卷
+- 在书籍操作 tab 中执行删除书籍等书籍级维护操作
+- 生成下一章 / 手动连续生成 2-5 章 / 手动开启新卷
 - 阅读章节正文与对应 lore 档案
 - 编辑 JSON / Markdown 产出物
 - 按 SQLite 表查看、编辑、新增和删除角色/地点/物品等数据库记录

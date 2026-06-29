@@ -140,6 +140,30 @@ def detect_book_title(book_dir: str | Path) -> str:
     return title or Path(book_dir).name
 
 
+def infer_main_story_goal_from_world_setting(world_setting: dict[str, Any] | None) -> str:
+    if not isinstance(world_setting, dict):
+        return ""
+
+    business = world_setting.get("business_analysis", {}) or {}
+    explicit_goal = str(business.get("main_story_goal", "")).strip()
+    if explicit_goal:
+        return explicit_goal
+
+    novel_setting = world_setting.get("novel_setting", {}) or {}
+    ending = novel_setting.get("ending_blueprint", {}) or {}
+    parts = [
+        str(ending.get("protagonist_final_state", "")).strip().rstrip("。"),
+        str(ending.get("relationship_final_state", "")).strip().rstrip("。"),
+        str(ending.get("world_order_final_state", "")).strip().rstrip("。"),
+    ]
+    parts = [part for part in parts if part]
+    if parts:
+        return "；".join(parts)
+
+    protagonist_role = str((novel_setting.get("factions_and_conflicts", {}) or {}).get("protagonist_role", "")).strip()
+    return protagonist_role.rstrip("。")
+
+
 def chapter_display_name(path: str | Path) -> str:
     identity = parse_chapter_identity(path)
     if not identity:

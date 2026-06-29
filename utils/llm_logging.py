@@ -41,6 +41,7 @@ def write_llm_run_log(
     started_monotonic: float,
     response_text: str | None = None,
     parsed_response: Any = None,
+    response_debug: Any = None,
     error: BaseException | None = None,
 ) -> None:
     context = _LLM_LOG_CONTEXT.get()
@@ -67,6 +68,7 @@ def write_llm_run_log(
         "response_schema": response_schema,
         "response_text": response_text,
         "parsed_response": parsed_response,
+        "response_debug": response_debug,
         "error": {"type": type(error).__name__, "message": str(error)} if error else None,
     }
     filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{caller['function']}.json"

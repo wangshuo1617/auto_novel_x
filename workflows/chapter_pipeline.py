@@ -30,10 +30,62 @@ from workflows.review_utils import is_review_passed, run_reader_review
 PLOT_ARC_CHAPTER_COUNT = 10
 
 
-def run_chapter_generation(loop) -> Dict[str, Any]:
+def _build_world_rules_card(world_rules: dict) -> str:
+    """将 world_rules 格式化为 draft_smith 可直接读取的速查卡。"""
+    lines = []
+    cur = world_rules.get("currency", {})
+    if cur:
+        lines.append(f"货币体系：单位={cur.get('unit','两')}，{cur.get('scale','')}，"
+                     f"禁用：{', '.join(cur.get('forbidden',[]))}")
+    ts = world_rules.get("title_system", [])
+    for org in ts:
+        lines.append(f"{org.get('organization','')}称谓："
+                     f"职位={org.get('titles',[])}，称呼={org.get('honorifics',[])}，"
+                     f"禁用={org.get('forbidden_titles',[])} ")
+    ps = world_rules.get("power_system", [])
+    if ps:
+        levels = [f"{p.get('level')}={p.get('name')}" for p in ps]
+        lines.append(f"战力等级：{' < '.join(levels)}")
+    other = world_rules.get("other_rules", "")
+    if other:
+        lines.append(f"其他规则：{other}")
+    return "\n".join(lines)
+
+
+def _apply_vocab_corrections(text: str, world_rules: dict | None = None) -> tuple[str, list[str]]:
+    """生成后、审核前自动修正已知词汇违规，避免因称谓问题触发全章重写。返回 (修正后文本, 修正说明列表)。"""
+    corrections: list[str] = []
+
+    # 1. 从 world_rules 提取 forbidden_titles 及其修正映射
+    title_fixes: list[tuple[str, str]] = []
+    if world_rules:
+        for org in (world_rules.get("title_system") or []):
+            forbidden = org.get("forbidden_titles", [])
+            correct = org.get("titles", [])
+            if forbidden and correct:
+                for bad in forbidden:
+                    # 用该机构第一个合法称谓做替换参考
+                    title_fixes.append((bad, correct[0]))
+
+    # 2. 硬编码高频已知修正（覆盖未在 world_rules 里声明的通用情况）
+    static_fixes: list[tuple[str, str]] = [
+        ("暗探",    "番役"),
+        ("提督大人", "督主"),
+    ]
+
+    all_fixes = static_fixes + title_fixes
+    for bad, good in all_fixes:
+        if bad in text:
+            text = text.replace(bad, good)
+            corrections.append(f"{bad} → {good}")
+
+    return text, corrections
+
+
+def run_chapter_generation(loop, outline_override: str = "") -> Dict[str, Any]:
     """
     阶段2–4：生成单章内容并回写。
-    会更新 loop 上的 lore_records、story_memory、cliffhanger、plot_arc_index 等，并落盘章节与 lore。
+    outline_override: 用户在前端审定并编辑过的细化大纲文本；非空时作为首要创作指导注入 draft_smith。
     """
     print("\n" + "=" * 60)
     print(f"生成第 {loop.current_volume_num} 卷第 {loop.current_chapter_num} 章（全书第 {loop.current_global_chapter_num} 章）")
@@ -48,6 +100,32 @@ def run_chapter_generation(loop) -> Dict[str, Any]:
     try:
         plot_story_context = story_context_for_plot(loop.story_memory)
         draft_story_context = story_context_for_draft(loop.story_memory, loop.lore_records)
+        # 注入 world_rules 速查卡（若 world_setting 中已定义）
+        world_rules = (loop.world_setting or {}).get("novel_setting", {}).get("world_rules") if loop.world_setting else None
+        if world_rules:
+            import json as _json
+            rules_card = _build_world_rules_card(world_rules)
+            draft_story_context = f"【世界规则速查卡（强制遵守）】\n{rules_card}\n\n{draft_story_context}"
+        # 优先用显式传入的 override，其次读 plot_arc 里已保存的 user_override
+        effective_override = outline_override.strip()
+        if not effective_override:
+            # 在_ensure_plot_arc运行前，尝试直接读磁盘上的user_override
+            from utils.book_artifacts import list_plot_files, parse_plot_range_identity, load_json_file as _lj
+            for _pf in list_plot_files(loop.book_dir):
+                _id = parse_plot_range_identity(_pf)
+                if _id and _id[0] == loop.current_volume_num:
+                    _fv, _s, _e = _id
+                    if _s <= loop.current_chapter_num <= _e:
+                        _pd = _lj(_pf, {})
+                        for _entry in _pd.get("plot_arc", []):
+                            if _entry.get("chapter_num") == loop.current_chapter_num:
+                                effective_override = _entry.get("user_override", "")
+                        break
+        if effective_override:
+            draft_story_context = (
+                f"【本章细化大纲（作者审定版，请严格按此创作）】\n{effective_override}\n\n"
+                f"【剧情历史摘要】\n{draft_story_context}"
+            )
         previous_chapter_ending = _build_previous_chapter_ending(loop)
         tracker.phase("context_prepared")
 
@@ -73,6 +151,12 @@ def run_chapter_generation(loop) -> Dict[str, Any]:
         )
         tracker.phase("draft", "completed", {"title": chapter_title, "characters": len(raw_text)})
         print(f"✓ 正文初稿已生成: {chapter_title}")
+
+        # 审核前自动修正已知词汇违规，省去因称谓问题触发的全章重写
+        _wr = (loop.world_setting or {}).get("novel_setting", {}).get("world_rules") if loop.world_setting else None
+        raw_text, _fixes = _apply_vocab_corrections(raw_text, _wr)
+        if _fixes:
+            print(f"✓ 词汇自动修正 {len(_fixes)} 处: {_fixes}")
 
         print("\n[阶段3] 质检与风控")
         tracker.phase("audit", "running")
@@ -128,7 +212,21 @@ def _build_lore_context(loop) -> str:
     return lore_context
 
 
-def _build_previous_chapter_ending(loop, max_chars: int = 600) -> str:
+def _extract_chapter_hook(text: str) -> str:
+    """从前章末尾文本提取最后一句话，格式化为元数据标签，避免模型将其当作散文照搬。"""
+    import re
+    # 去掉章节标题行
+    text = re.sub(r"^#.*\n", "", text).strip()
+    # 按句末标点拆分，找最后一个有意义的句子
+    sentences = re.split(r'(?<=[^\w\s])', text)
+    for sent in reversed(sentences):
+        sent = sent.strip()
+        if len(sent) >= 8:
+            return f"[前章钩子: \"{sent[-80:]}\"]"
+    return f"[前章钩子: \"{text[-60:]}\"]"
+
+
+def _build_previous_chapter_ending(loop, max_chars: int = 200) -> str:
     chapter_files = list_chapter_files(loop.book_dir)
     if not chapter_files:
         return ""
@@ -141,7 +239,7 @@ def _build_previous_chapter_ending(loop, max_chars: int = 600) -> str:
         return ""
     if not content:
         return ""
-    return content[-max_chars:]
+    return _extract_chapter_hook(content[-max_chars:])
 
 
 def _participating_characters_for_outline(db_state: dict, chapter_outline: dict) -> List[dict]:
@@ -716,6 +814,23 @@ def _ensure_plot_arc(loop, full_story_history: str) -> Tuple[dict, str, dict]:
                 evaluation_focus="检查剧情大纲是否与当前卷阶段匹配，是否承接既有剧情，并为接下来的十章提供明确推进。",
             )
             if is_review_passed(review_data):
+                # 毒舌书评人通过后，对当前章大纲再跑连贯性检查
+                current_outline = loop.plot_arc[0] if loop.plot_arc else {}
+                print("\n[J] 连贯性守门员正在检查大纲逻辑...")
+                continuity_result = ContinuityKeeper(
+                    db_state=loop.db.get_state(),
+                    chapter_outline=json.dumps(current_outline, ensure_ascii=False),
+                    generated_text=json.dumps(current_outline, ensure_ascii=False),
+                ).run()
+                if isinstance(continuity_result, dict) and continuity_result.get("audit_result") == "FAIL":
+                    print(f"⚠ 大纲连贯性检查未通过：{continuity_result.get('review_comments','')[:120]}")
+                    cont_feedback = continuity_result.get("review_comments", "")
+                    feedback_text = (feedback_text + "\n" + cont_feedback).strip()
+                    loop.plot_arc = []
+                    loop.plot_arc_index = 0
+                    print(f"  → 重新生成大纲...")
+                    continue
+                print("✓ 大纲连贯性检查通过")
                 review_passed = True
                 break
             loop.plot_arc = []
@@ -800,6 +915,10 @@ def _run_audit_phase(
     max_retries = 3
     retry_count = 0
     audit_passed = False
+    # 跟踪历次草稿里评分最高的一版，供重试耗尽后"降级接受"，避免单章卡死整卷
+    best_text = raw_text
+    best_title = chapter_title
+    best_score = -1
 
     while retry_count < max_retries and not audit_passed:
         print(f"\n[I] 毒舌书评人正在审核... (尝试 {retry_count + 1}/{max_retries})")
@@ -824,6 +943,12 @@ def _run_audit_phase(
         if tracker:
             tracker.phase("reader_review", "completed", {"attempt": retry_count + 1, "decision": decision, "score": score})
 
+        # 记录评分最高的草稿（降级兜底用）
+        if score > best_score:
+            best_score = score
+            best_text = raw_text
+            best_title = chapter_title
+
         if decision == "REWRITE" or score < 3:
             print(f"✗ 审核未通过 (评分: {score}/5)")
             print(f"  反馈: {review_data.get('review_summary', '无')}")
@@ -845,10 +970,12 @@ def _run_audit_phase(
         print("\n[J] 连贯性守门员正在检查逻辑...")
         if tracker:
             tracker.phase("continuity_check", "running", {"attempt": retry_count + 1})
+        _wr = (loop.world_setting or {}).get("novel_setting", {}).get("world_rules") if loop.world_setting else None
         continuity_keeper = ContinuityKeeper(
             db_state=loop.db.get_state(),
             chapter_outline=json.dumps(chapter_outline, ensure_ascii=False),
             generated_text=raw_text,
+            world_rules=_wr,
         )
         continuity_result = continuity_keeper.run()
         if not isinstance(continuity_result, dict):
@@ -901,6 +1028,18 @@ def _run_audit_phase(
                 raise RuntimeError(f"更新数据库时出错，本章不会写入: {e}") from e
             if tracker:
                 tracker.phase("database_update", "completed")
+
+    # 重试耗尽仍未通过：降级接受评分最高的草稿，避免单章卡死整卷。
+    # 不做数据库更新（缺少连贯性守门员校验过的 updates，宁可状态不变也不脏写），
+    # 并打印醒目警告，提示该章需人工在前端重新生成。
+    if not audit_passed:
+        print("=" * 50)
+        print(f"⚠⚠ 第 {loop.current_chapter_num} 章重试 {max_retries} 次仍未通过审核，"
+              f"降级接受评分最高的草稿（{best_score}/5）继续推进。")
+        print("⚠⚠ 该章未经连贯性守门员放行、数据库状态未更新，建议事后在前端单独【重新生成】此章。")
+        print("=" * 50)
+        raw_text, chapter_title = best_text, best_title
+        audit_passed = True
 
     return audit_passed, raw_text, chapter_title, plot_data, plot_data_for_draft
 

@@ -19,6 +19,18 @@ from utils.book_artifacts import (
     write_json_file,
 )
 from utils.story_context import build_volume_progress, merge_lore_into_story_memory, normalize_story_memory, story_context_for_plot, story_memory_path
+from utils.prompt_presets import use_prompt_preset
+
+
+def _renumber_plot_arc_from(plot_data: dict, start_chapter_num: int) -> None:
+    """把 plot_arc 的 chapter_num 强制重排为从 start_chapter_num 起的连续序号。
+    模型常把 current_chapter_num 误解成"从下一章排"，导致跳章、留数据缺口。"""
+    arc = plot_data.get("plot_arc")
+    if not isinstance(arc, list):
+        return
+    for index, outline in enumerate(arc):
+        if isinstance(outline, dict):
+            outline["chapter_num"] = start_chapter_num + index
 
 
 def load_existing_book(loop) -> None:
@@ -178,18 +190,23 @@ def _load_or_build_plot_arc(loop, book_dir: Path) -> None:
     print("✓ 未找到匹配当前卷章的 plot_arc 缓存，尝试使用剧情工程师生成 plot_arc...")
     try:
         volume_progress = build_volume_progress(loop.volume_plan or {}, loop.current_chapter_num)
-        plot_engineer = PlotEngineer(
-            world_setting=loop.get_novel_setting(),
-            db_state=loop.db.get_state(),
-            story_history=story_context_for_plot(loop.story_memory),
-            volume_plan=loop.volume_plan or {},
-            volume_progress=volume_progress,
-            current_chapter_num=loop.current_chapter_num,
-        )
-        plot_result = plot_engineer.run()
+        # 必须在书籍绑定的 prompt 预设上下文内生成，否则会回退到 default 预设
+        with use_prompt_preset(getattr(loop, "prompt_preset_id", None)):
+            plot_engineer = PlotEngineer(
+                world_setting=loop.get_novel_setting(),
+                db_state=loop.db.get_state(),
+                story_history=story_context_for_plot(loop.story_memory),
+                volume_plan=loop.volume_plan or {},
+                volume_progress=volume_progress,
+                current_chapter_num=loop.current_chapter_num,
+            )
+            plot_result = plot_engineer.run()
         if not isinstance(plot_result, dict):
             raise ValueError("PlotEngineer 必须返回 JSON 对象")
         plot_data = plot_result
+        # 强制把章节号对齐到当前章起（模型常把 current_chapter_num 误解成"从下一章排"，
+        # 导致跳章、留数据缺口）
+        _renumber_plot_arc_from(plot_data, loop.current_chapter_num)
         plot_data["volume_progress"] = volume_progress
         plot_data["volume_num"] = loop.current_volume_num
 

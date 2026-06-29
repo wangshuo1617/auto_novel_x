@@ -42,7 +42,7 @@ class DraftSmith:
         normalized = []
         raw_plot_points = self.plot_data.get("plot_points", [])
         # Target total chapter words; try to hit midpoint of prompt goal
-        CHAPTER_TARGET = 3500
+        CHAPTER_TARGET = 3600
 
         # First pass: collect explicit suggestions and count beats
         explicit_total = 0

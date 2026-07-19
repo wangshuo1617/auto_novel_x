@@ -392,17 +392,26 @@ def _render_generation_tab(book_path: str, default_goal: str, prompt_preset_id: 
     col_preview, col_confirm, col_skip = st.columns(3)
     if col_preview.button("① 预览细纲", key="btn-preview-outline",
                           use_container_width=True, disabled=not GEMINI_API_KEY):
-        result = _run_live_action(
-            live_log_placeholder,
-            heading="正在生成细化大纲...",
-            runner=lambda log_callback: get_chapter_outline_preview(
-                book_path, prompt_preset_id=prompt_preset_id
-            ),
-        )
-        if result.success and result.payload and result.payload.get("outline_text"):
-            st.session_state[pending_key] = result.payload["outline_text"]
-        else:
-            _set_last_action(kind="error", message=result.message, logs=result.logs)
+        try:
+            result = _run_live_action(
+                live_log_placeholder,
+                heading="正在生成细化大纲...",
+                runner=lambda log_callback: get_chapter_outline_preview(
+                    book_path, prompt_preset_id=prompt_preset_id
+                ),
+            )
+            if result.success and result.payload and result.payload.get("outline_text"):
+                outline = str(result.payload["outline_text"]).strip()
+                if len(outline) > 0 and len(outline) < 50000:  # 防止超大文本卡死前端
+                    st.session_state[pending_key] = outline
+                else:
+                    _set_last_action(kind="error", message=f"细纲异常：长度 {len(outline)}，超出合理范围", logs=result.logs)
+            else:
+                _set_last_action(kind="error", message=result.message, logs=result.logs)
+        except Exception as e:
+            _set_last_action(kind="error", message=f"预览细纲时发生错误：{type(e).__name__}: {str(e)[:200]}", logs=[])
+            import traceback
+            traceback.print_exc()
         st.rerun()
 
     if col_skip.button("直接生成（不预览细纲）", key="tab-generate-chapter",
@@ -413,9 +422,20 @@ def _render_generation_tab(book_path: str, default_goal: str, prompt_preset_id: 
     # 细纲预览 / 编辑区
     if pending_key in st.session_state:
         st.markdown("##### 细化大纲（可直接编辑后确认）")
+        try:
+            outline_value = str(st.session_state.get(pending_key, ""))
+            if not outline_value or len(outline_value) > 100000:
+                st.error(f"细纲数据异常（长度 {len(outline_value)}），已清空")
+                st.session_state.pop(pending_key, None)
+                st.rerun()
+        except Exception as e:
+            st.error(f"加载细纲失败：{e}")
+            st.session_state.pop(pending_key, None)
+            st.rerun()
+
         edited = st.text_area(
             "编辑细化大纲",
-            value=st.session_state[pending_key],
+            value=outline_value,
             height=420,
             key="outline-edit-area",
             label_visibility="collapsed",

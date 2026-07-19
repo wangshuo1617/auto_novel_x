@@ -1357,6 +1357,7 @@ def _format_outline_as_template(outline: dict, chapter_num: int, db_state: dict 
     title = outline.get("title", f"第{chapter_num}章")
     points = outline.get("plot_points", []) or []
     emotional_tone = outline.get("emotional_tone", "")
+    relationship_beat = outline.get("relationship_beat", "")
     cliffhanger = outline.get("cliffhanger", "")
     expected_reaction = outline.get("expected_reader_reaction", "")
     char_names = resolve_chars(outline.get("participating_characters", []))
@@ -1367,6 +1368,8 @@ def _format_outline_as_template(outline: dict, chapter_num: int, db_state: dict 
     lines.append(f"出场人物：{char_names}  |  场景：{loc_name}  |  道具：{item_names}")
     if emotional_tone:
         lines.append(f"情绪基调：{emotional_tone}")
+    if relationship_beat:
+        lines.append(f"感情线：{relationship_beat}")
     lines += ["", "── 剧情流程 ──", ""]
 
     for i, p in enumerate(points, 1):

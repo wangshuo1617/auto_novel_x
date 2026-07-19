@@ -30,6 +30,21 @@ from workflows.review_utils import is_review_passed, run_reader_review
 PLOT_ARC_CHAPTER_COUNT = 10
 
 
+def _load_writing_guidelines(book_dir) -> str:
+    """读取书目录下 writing_guidelines.json（章节局部重写沉淀的人工意见），格式化为注入文本。"""
+    from pathlib import Path
+    path = Path(book_dir) / "writing_guidelines.json"
+    if not path.exists():
+        return ""
+    data = load_json_file(path, {})
+    items = data.get("guidelines") if isinstance(data, dict) else None
+    if not items:
+        return ""
+    lines = [f"- {g['instruction'].strip()}" for g in items
+             if isinstance(g, dict) and g.get("instruction")]
+    return "\n".join(lines)
+
+
 def _build_world_rules_card(world_rules: dict) -> str:
     """将 world_rules 格式化为 draft_smith 可直接读取的速查卡。"""
     lines = []
@@ -106,6 +121,13 @@ def run_chapter_generation(loop, outline_override: str = "") -> Dict[str, Any]:
             import json as _json
             rules_card = _build_world_rules_card(world_rules)
             draft_story_context = f"【世界规则速查卡（强制遵守）】\n{rules_card}\n\n{draft_story_context}"
+        # 注入沉淀的人工写作意见（来自章节局部重写的反馈），让全文写作不再重犯同类问题
+        guidelines_text = _load_writing_guidelines(loop.book_dir)
+        if guidelines_text:
+            draft_story_context = (
+                f"【作者写作纠正意见（必须遵守，这些是过往人工反馈，切勿重犯）】\n{guidelines_text}\n\n"
+                f"{draft_story_context}"
+            )
         # 优先用显式传入的 override，其次读 plot_arc 里已保存的 user_override
         effective_override = outline_override.strip()
         if not effective_override:

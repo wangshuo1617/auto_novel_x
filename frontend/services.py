@@ -1486,6 +1486,45 @@ def save_chapter_outline_override(book_dir: str | Path, override_text: str) -> A
     return _capture_action(_do, message="细纲修改已保存。")
 
 
+WRITING_GUIDELINES_FILE = "writing_guidelines.json"
+
+
+def _append_writing_guideline(book_path: Path, instruction: str, source_chapter: str = "") -> None:
+    """把一条人工修改意见沉淀到书目录，供后续全文写作参考。去重、限量。"""
+    instruction = (instruction or "").strip()
+    if not instruction:
+        return
+    path = book_path / WRITING_GUIDELINES_FILE
+    data = load_json_file(path, {}) if path.exists() else {}
+    if not isinstance(data, dict):
+        data = {}
+    items = data.get("guidelines") or []
+    # 去重：正文相同的意见不重复记录
+    if any(isinstance(g, dict) and g.get("instruction") == instruction for g in items):
+        return
+    items.append({"instruction": instruction, "source_chapter": source_chapter})
+    # 只保留最近 30 条，避免无限膨胀
+    data["guidelines"] = items[-30:]
+    write_json_file(path, data)
+    print(f"✓ 已记录人工写作意见到 {WRITING_GUIDELINES_FILE}（当前 {len(data['guidelines'])} 条）")
+
+
+def load_writing_guidelines_text(book_dir: str | Path) -> str:
+    """读取沉淀的人工写作意见，格式化为可注入 DraftSmith 的文本；无则返回空串。"""
+    path = Path(book_dir) / WRITING_GUIDELINES_FILE
+    if not path.exists():
+        return ""
+    data = load_json_file(path, {})
+    items = data.get("guidelines") if isinstance(data, dict) else None
+    if not items:
+        return ""
+    lines = []
+    for g in items:
+        if isinstance(g, dict) and g.get("instruction"):
+            lines.append(f"- {g['instruction'].strip()}")
+    return "\n".join(lines)
+
+
 def rewrite_chapter_fragment(
     book_dir: str | Path,
     relative_path: str,
@@ -1554,6 +1593,10 @@ def rewrite_chapter_fragment(
         new_text = full_text.replace(original_fragment, replacement, 1)
         write_text_file(chapter_path, new_text)
         print(f"✓ 已替换片段并保存: {chapter_path.name}")
+
+        # 沉淀人工意见：追加到 writing_guidelines.json，供后续全文写作参考，
+        # 避免同类问题（如人设台词不符）在新章节反复出现。
+        _append_writing_guideline(book_path, instruction, source_chapter=relative_path)
         return {"replaced": True, "chapter": relative_path}
 
     return _capture_action(_do, message="局部重写完成。", log_callback=log_callback)

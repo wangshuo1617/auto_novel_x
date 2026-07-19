@@ -22,7 +22,6 @@
       "roadmap": {
         "type": "array",
         "description": "本卷里程碑路线图",
-        "minItems": 3,
         "items": {
           "type": "object",
           "properties": {

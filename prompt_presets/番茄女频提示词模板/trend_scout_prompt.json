@@ -7,7 +7,6 @@
       "top_3_genres": {
         "type": "array",
         "description": "当前最热门的3个题材组合",
-        "minItems": 3,
         "items": {
           "type": "object",
           "properties": {

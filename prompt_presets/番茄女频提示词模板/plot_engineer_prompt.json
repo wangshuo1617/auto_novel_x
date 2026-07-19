@@ -11,8 +11,6 @@
       "plot_arc": {
         "type": "array",
         "description": "接下来10章的剧情大纲",
-        "minItems": 10,
-        "maxItems": 10,
         "items": {
           "type": "object",
           "properties": {
@@ -45,7 +43,6 @@
             "plot_points": {
               "type": "array",
               "description": "本章情节点",
-              "minItems": 3,
               "items": {
                 "type": "object",
                 "properties": {

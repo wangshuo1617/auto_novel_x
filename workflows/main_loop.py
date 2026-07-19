@@ -113,24 +113,32 @@ class MainLoop:
             return run_chapter_generation(self, outline_override=outline_override)
 
     def check_volume_complete(self) -> bool:
-        """检查当前卷 roadmap 是否已被章节 lore 标记完成。"""
+        """检查当前卷是否完成（基于章数硬边界，避免与 plot_arc 批次错位）。"""
+        # 从 volume_plan 读取目标章数，默认20章
+        target_chapters = 20
         if self.volume_plan:
             roadmap = self.volume_plan.get("roadmap", [])
             if roadmap:
-                completed_all = completed_roadmap_stage_indexes(self.story_memory, self.current_volume_num)
-                expected = set(range(1, len(roadmap) + 1))
-                completed = completed_all & expected
-                ignored = sorted(completed_all - expected)
-                missing = sorted(expected - completed)
-                complete = not missing
-                if ignored:
-                    print(f"当前卷 roadmap 忽略越界完成标记：{ignored}")
-                if complete:
-                    print(f"当前卷 roadmap 已全部完成：{sorted(completed)}")
-                else:
-                    print(f"当前卷 roadmap 尚未完成，缺少阶段：{missing}")
-                return complete
-        return self.current_chapter_num >= 50
+                # 从 roadmap 最后一个阶段的章节范围推算目标章数
+                # 如 "Climax (约16-20章)" → 目标20章
+                last_stage = roadmap[-1].get("stage", "")
+                import re
+                match = re.search(r'约?\d+-(\d+)章', last_stage)
+                if match:
+                    target_chapters = int(match.group(1))
+
+            # 也支持 volume_plan 直接指定 target_chapters 字段
+            if "target_chapters" in self.volume_plan:
+                target_chapters = self.volume_plan["target_chapters"]
+
+        complete = self.current_chapter_num >= target_chapters
+
+        if complete:
+            print(f"当前卷已达到目标章数：{self.current_chapter_num}/{target_chapters}")
+        else:
+            print(f"当前卷进度：{self.current_chapter_num}/{target_chapters} 章")
+
+        return complete
 
     def start_new_volume(self) -> None:
         """开始新的一卷：委托给 phase_new_volume 执行。"""

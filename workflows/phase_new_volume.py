@@ -5,8 +5,45 @@
 import json
 from typing import Any
 from agents import ArcDirector, ElementDesigner
-from utils.book_artifacts import write_json_file
+from utils.book_artifacts import (
+    list_plot_files,
+    load_json_file,
+    parse_plot_range_identity,
+    plot_arc_artifact_path,
+    write_json_file,
+)
 from workflows.review_utils import is_review_passed, run_reader_review
+
+
+def _trim_orphan_plot_arc(loop) -> None:
+    """卷roadmap提前完成（未写满10章批次）时，裁掉本卷 plot_arc 里未写章节的孤儿条目，
+    并按实际章号重命名文件，避免与下一卷全局章号冲突（如旧卷 ch11-20 只写到18，
+    孤儿 ch19-20 会与新卷第1章的全局第19章错位）。"""
+    last_written = loop.current_chapter_num  # 此时是本卷最后写完的章号
+    for plot_file in list_plot_files(loop.book_dir):
+        identity = parse_plot_range_identity(plot_file)
+        if not identity:
+            continue
+        vol, start, end = identity
+        if vol != loop.current_volume_num or end <= last_written:
+            continue
+        data = load_json_file(plot_file, {})
+        if not isinstance(data, dict):
+            continue
+        arc = [c for c in data.get("plot_arc", []) if c.get("chapter_num", 0) <= last_written]
+        if not arc:
+            # 整个批次都没写 → 删除空孤儿文件
+            plot_file.unlink(missing_ok=True)
+            print(f"✓ 删除未使用的孤儿 plot_arc: {plot_file.name}")
+            continue
+        data["plot_arc"] = arc
+        new_start = arc[0].get("chapter_num", start)
+        new_end = arc[-1].get("chapter_num", last_written)
+        new_file = plot_arc_artifact_path(loop.book_dir, vol, new_start, new_end)
+        write_json_file(new_file, data)
+        if new_file.name != plot_file.name:
+            plot_file.unlink(missing_ok=True)
+            print(f"✓ 裁剪孤儿章：{plot_file.name} → {new_file.name}")
 
 
 def run_new_volume(loop) -> None:
@@ -14,6 +51,9 @@ def run_new_volume(loop) -> None:
     print("\n" + "=" * 60)
     print(f"开始第 {loop.current_volume_num + 1} 卷")
     print("=" * 60)
+
+    # 卷提前收尾时，先裁掉本卷 plot_arc 里未写的孤儿章，防止与新卷全局章号错位
+    _trim_orphan_plot_arc(loop)
 
     if loop.story_memory.get("running_summary"):
         loop.previous_volume_summary = loop.story_memory["running_summary"]

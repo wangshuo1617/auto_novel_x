@@ -124,7 +124,14 @@ def _run_volume_asset_addon(loop) -> None:
         if not isinstance(addon_result, dict):
             raise ValueError("ElementDesigner addon 必须返回 JSON 对象")
         addon_raw = addon_result
-        normalized_assets = _normalize_addon_assets(addon_raw, loop.volume_plan or {})
+        existing_location_ids = [
+            str(loc.get("id", "")).strip()
+            for loc in db_state.get("locations", []) or []
+            if str(loc.get("id", "")).strip()
+        ]
+        normalized_assets = _normalize_addon_assets(
+            addon_raw, loop.volume_plan or {}, existing_location_ids=existing_location_ids
+        )
         review_data = run_reader_review(
             review_stage="element_design",
             content_to_review=addon_raw,
@@ -228,7 +235,11 @@ def _build_existing_assets_summary(db_state: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _normalize_addon_assets(addon_raw: dict[str, Any], volume_plan: dict[str, Any]) -> dict[str, Any]:
+def _normalize_addon_assets(
+    addon_raw: dict[str, Any],
+    volume_plan: dict[str, Any],
+    existing_location_ids: list[str] | None = None,
+) -> dict[str, Any]:
     normalized = {
         "supporting_characters": [],
         "villains": [],
@@ -237,6 +248,9 @@ def _normalize_addon_assets(addon_raw: dict[str, Any], volume_plan: dict[str, An
     }
     if not isinstance(addon_raw, dict):
         return normalized
+
+    # 已存在于数据库的地点ID，用于校验角色/物品引用是否为真实地点
+    existing_ids = set(existing_location_ids or [])
 
     new_location_ids = []
     for loc in addon_raw.get("new_locations", []) or []:
@@ -254,6 +268,9 @@ def _normalize_addon_assets(addon_raw: dict[str, Any], volume_plan: dict[str, An
             }
         )
 
+    # 有效地点 = 本次新建 + 数据库已有。引用其它ID一律视为幽灵地点，落位置空。
+    valid_location_ids = new_location_ids + [lid for lid in existing_ids if lid not in new_location_ids]
+
     main_villain_id = str(volume_plan.get("main_villain_id", "")).strip()
     for char in addon_raw.get("new_characters", []) or []:
         char_id = str(char.get("id", "")).strip()
@@ -262,7 +279,7 @@ def _normalize_addon_assets(addon_raw: dict[str, Any], volume_plan: dict[str, An
         current_status = {
             "stats": char.get("stats", {}) or {},
             "state": "active",
-            "location_id": _resolve_location_id(char.get("initial_location_id"), new_location_ids),
+            "location_id": _resolve_location_id(char.get("initial_location_id"), valid_location_ids),
             "inventory_ids": [],
         }
         base = {
@@ -309,7 +326,7 @@ def _normalize_addon_assets(addon_raw: dict[str, Any], volume_plan: dict[str, An
                 "effect_description": item.get("effect", ""),
                 "placement": {
                     "type": "world_object",
-                    "location_id": _resolve_location_id(item.get("location_id"), new_location_ids),
+                    "location_id": _resolve_location_id(item.get("location_id"), valid_location_ids),
                     "owner_id": None,
                 },
             }
@@ -319,6 +336,8 @@ def _normalize_addon_assets(addon_raw: dict[str, Any], volume_plan: dict[str, An
 
 
 def _resolve_location_id(raw_value: Any, known_location_ids: list[str]) -> str | None:
+    """把引用解析为真实地点ID。若引用的地点既不在新建列表也不在已有库中，
+    视为幽灵地点，返回 None（落位置空），避免写库时外键失败、整批资产回滚。"""
     if raw_value is None:
         return None
     text = str(raw_value).strip()
@@ -329,7 +348,8 @@ def _resolve_location_id(raw_value: Any, known_location_ids: list[str]) -> str |
     for loc_id in known_location_ids:
         if loc_id and loc_id in text:
             return loc_id
-    return text
+    # 幽灵地点：不在任何有效地点中，落位置空而非返回不存在的ID
+    return None
 
 
 def _is_villain_character(char: dict[str, Any], main_villain_id: str) -> bool:

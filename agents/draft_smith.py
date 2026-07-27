@@ -19,6 +19,16 @@ class DraftSmith:
         self.previous_chapter_ending = previous_chapter_ending
         self.plot_analysis = plot_analysis
         self.plot_data = plot_data
+        # 作者审定版细纲：最高优先级创作指导，覆盖原始 plot_points。
+        # 置于 story_history 顶部并明确"以此为准"，确保正文严格按修改后的细纲生成。
+        author_outline = (plot_data or {}).get("author_approved_outline", "").strip() if isinstance(plot_data, dict) else ""
+        if author_outline:
+            self.story_history = (
+                "【本章细纲以作者审定版为准，严格按下方细纲创作，与历史摘要中的旧走向冲突时一律以此为准】\n"
+                f"{author_outline}\n\n"
+                "【以下为剧情历史摘要，仅供承接前文，不得据此偏离上方细纲】\n"
+                f"{story_history}"
+            )
         self.system_prompt = load_prompt_config("draft_smith_prompt", "system")
         # 将字典转换为JSON字符串，以便提示词模板正确格式化
         prepare_data = {

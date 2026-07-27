@@ -162,6 +162,10 @@ def run_chapter_generation(loop, outline_override: str = "") -> Dict[str, Any]:
         print(f"✓ 剧情大纲已生成: {chapter_outline.get('title', '未命名')}")
 
         plot_data_for_draft = _plot_data_for_draft(loop, chapter_outline)
+        # 作者审定版细纲优先：把 user_override 作为最高优先级创作指导注入，
+        # 覆盖原始 plot_points 的主导地位，确保正文按修改后的细纲生成
+        if effective_override:
+            plot_data_for_draft["author_approved_outline"] = effective_override
         tracker.phase("draft", "running")
         raw_text, chapter_title = _run_draft(
             loop,

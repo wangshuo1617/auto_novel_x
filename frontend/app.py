@@ -97,9 +97,14 @@ def _render_novel_mode(output_dir: str, live_log_placeholder) -> None:
     st.subheader(summary["title"])
     if summary.get("tagline"):
         st.caption(summary["tagline"])
+    if summary.get("label_line"):
+        st.markdown(f"**{summary['label_line']}**")
     st.write(summary["logline"] or "暂无一句话简介。")
     if summary.get("blurb"):
         st.markdown(summary["blurb"])
+    if summary.get("mini_theater"):
+        with st.expander("小剧场"):
+            st.markdown(summary["mini_theater"])
 
     _render_metrics(summary)
     _render_action_bar(

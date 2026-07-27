@@ -118,7 +118,9 @@ class BookSummary:
     genre: str
     tagline: str
     logline: str
+    label_line: str
     blurb: str
+    mini_theater: str
     chapter_count: int
     volume_count: int
     artifact_count: int
@@ -156,7 +158,9 @@ def list_books(output_dir: str | Path = "output") -> list[BookSummary]:
                 genre=business.get("selected_genre", ""),
                 tagline=business.get("tagline", ""),
                 logline=business.get("logline", ""),
+                label_line=business.get("label_line", ""),
                 blurb=business.get("blurb", ""),
+                mini_theater=business.get("mini_theater", ""),
                 chapter_count=chapter_count,
                 volume_count=volume_count,
                 artifact_count=len(list_artifact_paths(book_dir)),
@@ -1264,7 +1268,9 @@ def _find_book_summary(book_dir: Path) -> BookSummary:
         genre="",
         tagline="",
         logline="",
+        label_line="",
         blurb="",
+        mini_theater="",
         chapter_count=len(list_chapter_files(book_dir)),
         volume_count=_volume_count(book_dir),
         artifact_count=len(list_artifact_paths(book_dir)),

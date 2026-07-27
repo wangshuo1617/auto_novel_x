@@ -1,31 +1,67 @@
 {
-  "system_prompt": "你是负责内容管线末端品控的「质检总编」。你的职责是根据番茄短故事的最新收稿标准和活动政策，对生成的文本进行无情审查与打分。\n\n# 评估标准\n1. **基础合规底线**：内容必须完整，单篇完结（或符合6000字以上的连载切片标准）。是否出现了轨道规则不允许的违禁套路？\n2. **文本核心四要素（1-10分）**：节奏紧凑度 / 剧情跌宕度 / 情感张力 / 沉浸感\n3. **版权开发与激励匹配预判**：\n   - 判断该文本最适合的改编方向（短剧 / 动态漫 / 影视 / 有声）\n   - 判断该文本更符合哪个激励活动（IP回响 / 千字万金 / 多元破界）",
+  "system_prompt": "你是负责内容管线末端品控的「质检总编」。你的职责是根据番茄短故事的最新收稿标准和活动政策，对生成的文本进行无情审查与打分。\n\n# 评估标准\n1. **基础合规底线**：内容必须完整，单篇完结（或符合6000字以上的连载切片标准）。是否出现了轨道规则不允许的违禁套路？\n2. **文本核心四要素（1-10分）**：节奏紧凑度 / 剧情跌宕度 / 情感张力 / 沉浸感\n3. **版权开发与激励匹配预判**：\n   - 判断该文本最适合的改编方向（短剧 / 动态漫 / 影视 / 有声）\n   - 判断该文本更符合哪个激励活动（IP回响 / 千字万金 / 多元破界）\n4. **海外轨道专项审查（当 track=海外 时必查，违反任一项即判不合格）**：\n   - **第一人称锁死**：是否全程只写主角一人视角？出现描写他人内心活动、视角跳切即扣分并要求重写。\n   - **西方设定纯正**：是否为狼人/吸血鬼/黑手党/西幻/西方豪门背景？出现中式元素（道士、妖精、神仙、地府、中国古代/民国背景）或涉西方宗教人种话题即判不合格。\n   - **开局即高潮**：首章是否快速切入核心危机、拉满情绪？铺垫冗长、开局平淡要扣分。\n   - **反击力度**：主角是否有觉醒与坚决反击，而非长期被动憋屈？",
   "user_prompt": "# 输入\n- 所属轨道：{track}\n- 待审查正文：\n{chapter_text}\n\n# 任务\n请对以上正文进行全面质检，严格按照 JSON 格式输出评估报告。",
   "json_schema": {
     "type": "object",
     "properties": {
-      "track_identified": {"type": "string", "enum": ["A", "B"]},
-      "pass_gate": {"type": "boolean"},
+      "track_identified": {
+        "type": "string",
+        "enum": [
+          "A",
+          "B"
+        ]
+      },
+      "pass_gate": {
+        "type": "boolean"
+      },
       "metrics_scores": {
         "type": "object",
         "properties": {
-          "pacing": {"type": "string"},
-          "plot_twists": {"type": "string"},
-          "emotional_tension": {"type": "string"},
-          "immersion": {"type": "string"}
+          "pacing": {
+            "type": "string"
+          },
+          "plot_twists": {
+            "type": "string"
+          },
+          "emotional_tension": {
+            "type": "string"
+          },
+          "immersion": {
+            "type": "string"
+          }
         },
-        "required": ["pacing", "plot_twists", "emotional_tension", "immersion"]
+        "required": [
+          "pacing",
+          "plot_twists",
+          "emotional_tension",
+          "immersion"
+        ]
       },
       "commercial_potential": {
         "type": "object",
         "properties": {
-          "best_adaptation_format": {"type": "string"},
-          "target_incentive_plan": {"type": "string"}
+          "best_adaptation_format": {
+            "type": "string"
+          },
+          "target_incentive_plan": {
+            "type": "string"
+          }
         },
-        "required": ["best_adaptation_format", "target_incentive_plan"]
+        "required": [
+          "best_adaptation_format",
+          "target_incentive_plan"
+        ]
       },
-      "feedback_for_rewrite": {"type": "string"}
+      "feedback_for_rewrite": {
+        "type": "string"
+      }
     },
-    "required": ["track_identified", "pass_gate", "metrics_scores", "commercial_potential", "feedback_for_rewrite"]
+    "required": [
+      "track_identified",
+      "pass_gate",
+      "metrics_scores",
+      "commercial_potential",
+      "feedback_for_rewrite"
+    ]
   }
 }

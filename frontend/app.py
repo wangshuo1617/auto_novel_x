@@ -209,12 +209,23 @@ def _render_short_story_tab(output_dir: str, live_log_placeholder) -> None:
 
     # ── 新建短故事 ────────────────────────────────────────────────────────────
     with st.expander("🆕 新建短故事", expanded=not stories):
-        track = st.radio("创作轨道", ["A — IP回响（文艺深度，30k-50k字）", "B — 高流量爆款（6k-80k字）"],
+        track_options = {
+            "国内-文艺": "国内-文艺 — IP回响/深度共鸣（30k-50k字）",
+            "国内-爆款": "国内-爆款 — 高流量/千字万金（6k-80k字）",
+            "海外": "海外 — 出海短故事/西方设定（约50k字，第一人称）",
+        }
+        track = st.radio("创作轨道", list(track_options.keys()),
+                         format_func=lambda k: track_options[k],
                          key="ss-track", horizontal=True)
-        track_char = "A" if track.startswith("A") else "B"
+        track_char = track
+        _ph = {
+            "国内-文艺": "例如：小城殡仪馆化妆师，为每位逝者还原生前最想被记住的模样",
+            "国内-爆款": "例如：现代女企业家穿越明朝，用商业思维降维打击权贵",
+            "海外": "例如：狼人女主发现五年伴侣纽带是骗局，月神仪式纪念日撞破背叛",
+        }
         target_words = st.number_input("预期总字数", min_value=6000, max_value=80000, value=20000, step=1000, key="ss-words")
         inspiration = st.text_area("初始灵感/关键词", height=100, key="ss-inspiration",
-                                   placeholder="例如：现代女企业家穿越明朝，用商业思维降维打击权贵")
+                                   placeholder=_ph.get(track, ""))
         outline_log = st.empty()
         if st.button("生成大纲", key="ss-gen-outline", disabled=not GEMINI_API_KEY or not inspiration.strip()):
             try:
@@ -246,7 +257,7 @@ def _render_short_story_tab(output_dir: str, live_log_placeholder) -> None:
     outline = view["outline"]
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("轨道", f"{'A — IP回响' if meta.get('track')=='A' else 'B — 高流量'}")
+    col1.metric("轨道", meta.get("track", "未知"))
     col2.metric("进度", f"{meta.get('completed_chapters',0)} / {meta.get('total_chapters',0)} 章")
     col3.metric("目标字数", f"{meta.get('target_words',0):,}")
 

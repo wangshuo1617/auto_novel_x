@@ -301,6 +301,20 @@ def _render_short_story_tab(output_dir: str, live_log_placeholder) -> None:
         if not chapter_files:
             st.info("还没有生成任何章节。")
         else:
+            # 一键复制所有章节：合并全文用 st.code 展示（代码块右上角自带复制按钮）
+            if st.button("📋 一键复制所有章节", key=f"ss-copy-all-{selected_path}"):
+                st.session_state[f"ss-show-all-{selected_path}"] = not st.session_state.get(f"ss-show-all-{selected_path}", False)
+            if st.session_state.get(f"ss-show-all-{selected_path}", False):
+                parts = []
+                for c in chapter_files:
+                    text = Path(c["path"]).read_text(encoding="utf-8").strip()
+                    parts.append(text)
+                full_text = "\n\n".join(parts)
+                total_words = sum(1 for ch in full_text if ch.strip())
+                st.caption(f"共 {len(chapter_files)} 章，约 {total_words:,} 字。点击代码块右上角复制按钮即可复制全文。")
+                st.code(full_text, language=None)
+                st.divider()
+
             sel_ch = st.selectbox("选择章节", [c["name"] for c in chapter_files], key=f"ss-read-{selected_path}")
             if sel_ch:
                 ch_path = next(c["path"] for c in chapter_files if c["name"] == sel_ch)

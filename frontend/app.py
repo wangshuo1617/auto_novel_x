@@ -6,6 +6,7 @@ import traceback
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
@@ -202,6 +203,33 @@ def _render_prompt_editor_dialog(book_path: str | None, book_view: dict | None, 
         st.rerun()
 
 
+def _render_copy_all_widget(full_text: str) -> None:
+    """用 HTML+JS 渲染一键复制组件，navigator.clipboard 无长度限制，可完整复制长文。"""
+    import json as _json
+    encoded = _json.dumps(full_text).replace("</", "<\\/")  # 安全嵌入 JS 字符串，防 </script> 截断
+    n = len(full_text)
+    html = (
+        '<div style="font-family:-apple-system,sans-serif;">'
+        '<button id="copyBtn" style="background:#ff4b4b;color:#fff;border:none;'
+        'border-radius:6px;padding:8px 20px;font-size:14px;cursor:pointer;font-weight:600;">'
+        f'📋 复制全文（{n} 字）</button>'
+        '<span id="copyStatus" style="margin-left:12px;color:#09ab3b;font-size:13px;"></span>'
+        '<script>'
+        f'const fullText = {encoded};'
+        'document.getElementById("copyBtn").addEventListener("click", async () => {'
+        'const s = document.getElementById("copyStatus");'
+        'try { await navigator.clipboard.writeText(fullText); s.textContent = "✅ 已复制到剪贴板"; }'
+        'catch (e) {'
+        'const ta = document.createElement("textarea"); ta.value = fullText;'
+        'document.body.appendChild(ta); ta.select(); document.execCommand("copy");'
+        'document.body.removeChild(ta); s.textContent = "✅ 已复制（兼容模式）"; }'
+        '});'
+        '</script>'
+        '</div>'
+    )
+    components.html(html, height=50)
+
+
 def _render_short_story_tab(output_dir: str, live_log_placeholder) -> None:
     """短故事模式：新建大纲 → 分步确认 → 逐章生成。"""
     st.markdown("### 📝 短故事")
@@ -301,7 +329,7 @@ def _render_short_story_tab(output_dir: str, live_log_placeholder) -> None:
         if not chapter_files:
             st.info("还没有生成任何章节。")
         else:
-            # 一键复制所有章节：合并全文用 st.code 展示（代码块右上角自带复制按钮）
+            # 一键复制所有章节：用 HTML+JS 组件，navigator.clipboard 无长度限制
             if st.button("📋 一键复制所有章节", key=f"ss-copy-all-{selected_path}"):
                 st.session_state[f"ss-show-all-{selected_path}"] = not st.session_state.get(f"ss-show-all-{selected_path}", False)
             if st.session_state.get(f"ss-show-all-{selected_path}", False):
@@ -311,8 +339,8 @@ def _render_short_story_tab(output_dir: str, live_log_placeholder) -> None:
                     parts.append(text)
                 full_text = "\n\n".join(parts)
                 total_words = sum(1 for ch in full_text if ch.strip())
-                st.caption(f"共 {len(chapter_files)} 章，约 {total_words:,} 字。点击代码块右上角复制按钮即可复制全文。")
-                st.code(full_text, language=None)
+                st.caption(f"共 {len(chapter_files)} 章，约 {total_words:,} 字。")
+                _render_copy_all_widget(full_text)
                 st.divider()
 
             sel_ch = st.selectbox("选择章节", [c["name"] for c in chapter_files], key=f"ss-read-{selected_path}")

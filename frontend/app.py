@@ -22,6 +22,8 @@ from frontend.services import (
     generate_short_story_chapter,
     get_book_health_report,
     get_chapter_outline_preview,
+    get_artifact_chapter_outline,
+    save_artifact_chapter_outline,
     get_database_table,
     get_book_view,
     get_generation_state_history,
@@ -36,6 +38,7 @@ from frontend.services import (
     read_artifact_text,
     regenerate_artifact,
     is_regeneratable_artifact,
+    is_chapter_artifact,
     rewrite_chapter_fragment,
     run_book_action,
     save_artifact_text,
@@ -676,6 +679,60 @@ def _chapter_character_count(chapter_content: str) -> int:
     return sum(1 for char in content if not char.isspace())
 
 
+def _render_chapter_outline_editor(book_path: str, selected_artifact: str) -> None:
+    """章节产物细纲编辑区：加载→修改→保存，重生成正文时按最新细纲创作。"""
+    state_key = f"artifact_outline::{selected_artifact}"
+    loaded_flag = f"artifact_outline_loaded::{selected_artifact}"
+
+    with st.expander("📝 章节细纲（重生成前可修改，保存后按最新细纲重写正文）", expanded=False):
+        if st.button("加载当前细纲", key=f"load-outline-{selected_artifact}",
+                     use_container_width=True):
+            try:
+                result = get_artifact_chapter_outline(book_path, selected_artifact)
+                if result.success and result.payload:
+                    st.session_state[state_key] = str(result.payload.get("outline_text", ""))
+                    st.session_state[loaded_flag] = True
+                    if result.payload.get("has_override"):
+                        st.session_state[f"{loaded_flag}::src"] = "已保存的作者审定版"
+                    else:
+                        st.session_state[f"{loaded_flag}::src"] = "细纲缓存模板（尚未人工修改）"
+                else:
+                    _set_last_action(kind="error", message=result.message, logs=result.logs)
+            except Exception as exc:
+                _set_last_action(kind="error", message=str(exc), logs=traceback.format_exc())
+            st.rerun()
+
+        if st.session_state.get(loaded_flag):
+            src = st.session_state.get(f"{loaded_flag}::src", "")
+            if src:
+                st.caption(f"来源：{src}")
+            edited = st.text_area(
+                "编辑细化大纲",
+                value=str(st.session_state.get(state_key, "")),
+                height=420,
+                key=f"outline-edit-{selected_artifact}",
+                label_visibility="collapsed",
+            )
+            if st.button("保存细纲修改", key=f"save-outline-{selected_artifact}",
+                         type="primary", use_container_width=True):
+                try:
+                    save_result = save_artifact_chapter_outline(book_path, selected_artifact, edited)
+                    _set_last_action(
+                        kind="success" if save_result.success else "error",
+                        message=save_result.message + "（点击下方「重新生成当前产物」按最新细纲重写正文）"
+                        if save_result.success else save_result.message,
+                        logs=save_result.logs,
+                    )
+                    if save_result.success:
+                        st.session_state[state_key] = edited
+                        st.session_state[f"{loaded_flag}::src"] = "已保存的作者审定版"
+                except Exception as exc:
+                    _set_last_action(kind="error", message=str(exc), logs=traceback.format_exc())
+                st.rerun()
+        else:
+            st.caption("点击「加载当前细纲」查看并编辑本章细纲。")
+
+
 def _render_artifact_editor(book_path: str, book_view: dict, live_log_placeholder) -> None:
     artifact_catalog = book_view["artifact_catalog"]
     artifact_options: list[str] = []
@@ -705,6 +762,10 @@ def _render_artifact_editor(book_path: str, book_view: dict, live_log_placeholde
         edited_content = st.text_area("编辑内容", value=artifact_content, height=560)
         submitted = st.form_submit_button("保存产物")
 
+    # ── 章节细纲编辑：重生成前可修改细纲，保存后按最新细纲重写正文 ──────────
+    if is_chapter_artifact(selected_artifact):
+        _render_chapter_outline_editor(book_path, selected_artifact)
+
     preview_left, preview_right = st.columns(2)
     with preview_left:
         st.markdown("#### 文件预览")
@@ -729,6 +790,8 @@ def _render_artifact_editor(book_path: str, book_view: dict, live_log_placeholde
         )
         if not can_regen:
             st.caption("仅支持重生成 world_setting.json / .md 和章节正文。")
+        elif is_chapter_artifact(selected_artifact):
+            st.caption("重生成会优先按上方保存的细纲创作。如需改细纲，先在上方「章节细纲」编辑并保存。")
         # 就近渲染实时日志：章节/总纲重生成是长任务，日志必须显示在按钮下方。
         # 全局 live_log_placeholder 在所有 tab 之上，在本 tab 内点击时用户看不到它刷新，
         # 会误以为"没执行"。这里用本地占位符让进度就近可见。

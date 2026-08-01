@@ -488,6 +488,11 @@ def is_regeneratable_artifact(relative_path: str) -> bool:
     return parse_plot_range_identity(relative_path) is not None
 
 
+def is_chapter_artifact(relative_path: str) -> bool:
+    """True when the artifact is a chapter markdown (可编辑细纲后重生成)。"""
+    return parse_chapter_identity(relative_path) is not None
+
+
 def _regenerate_artifact(book_path: Path, relative_path: str, prompt_preset_id: str) -> dict[str, Any]:
     if relative_path == "world_setting.json":
         return _regenerate_world_setting(book_path, prompt_preset_id)
@@ -623,6 +628,12 @@ def _regenerate_chapter_markdown(book_path: Path, relative_path: str, prompt_pre
     story_history_for_draft = story_context_for_draft(story_memory, prior_lore_records)
     previous_chapter_ending = _extract_chapter_hook(_load_previous_chapter_ending(book_path, volume_num, chapter_num)) if _load_previous_chapter_ending(book_path, volume_num, chapter_num) else ""
     plot_data_for_draft = _build_plot_data_for_draft_from_outline(db_state, chapter_outline)
+    # 作者审定版细纲优先：若该章已保存 user_override，作为最高优先级创作指导注入，
+    # 确保重生成的正文严格按修改后的细纲，而非原始 plot_points。
+    user_override = str(chapter_outline.get("user_override", "")).strip()
+    if user_override:
+        plot_data_for_draft["author_approved_outline"] = user_override
+        print("✓ 检测到作者审定版细纲，重生成将严格按此细纲创作")
 
     print(f"正在重生成第 {volume_num} 卷第 {chapter_num} 章...")
     later_chapters = [
@@ -719,6 +730,65 @@ def _load_chapter_outline_for_regeneration(book_path: Path, volume_num: int, cha
                 return outline, str(plot_data.get("plot_analysis", "")), plot_data
         raise ValueError(f"{plot_file.name} 中缺少第 {chapter_num} 章大纲")
     raise ValueError(f"未找到可用于重生成第 {volume_num} 卷第 {chapter_num} 章的 plot_arc 缓存")
+
+
+def get_artifact_chapter_outline(book_dir: str | Path, relative_path: str) -> ActionResult:
+    """读取某章节产物对应的细化大纲（供产物编辑 tab 在重生成前展示/编辑）。
+    优先返回已保存的 user_override，否则返回按 plot_arc 条目格式化的模板文本。"""
+    book_path = Path(book_dir)
+
+    def _do():
+        chapter_identity = parse_chapter_identity(relative_path)
+        if chapter_identity is None:
+            raise ValueError(f"该产物不是章节，无法编辑细纲：{relative_path}")
+        volume_num, chapter_num = chapter_identity
+        chapter_outline, _plot_analysis, _plot_data = _load_chapter_outline_for_regeneration(
+            book_path, volume_num, chapter_num
+        )
+        override = str(chapter_outline.get("user_override", "")).strip()
+        if override:
+            text = override
+            has_override = True
+        else:
+            db_state = get_database_for_book(book_path).get_state()
+            text = _format_outline_as_template(chapter_outline, chapter_num, db_state=db_state)
+            has_override = False
+        return {
+            "outline_text": text,
+            "volume_num": volume_num,
+            "chapter_num": chapter_num,
+            "has_override": has_override,
+        }
+
+    return _capture_action(_do, message="章节细纲已加载。")
+
+
+def save_artifact_chapter_outline(book_dir: str | Path, relative_path: str, override_text: str) -> ActionResult:
+    """将编辑后的细纲保存为指定章节产物的 user_override，重生成正文时优先按此细纲创作。"""
+    book_path = Path(book_dir)
+
+    def _do():
+        chapter_identity = parse_chapter_identity(relative_path)
+        if chapter_identity is None:
+            raise ValueError(f"该产物不是章节，无法保存细纲：{relative_path}")
+        volume_num, chapter_num = chapter_identity
+        for plot_file in list_plot_files(book_path):
+            identity = parse_plot_range_identity(plot_file)
+            if not identity:
+                continue
+            file_volume, start, end = identity
+            if file_volume == volume_num and start <= chapter_num <= end:
+                data = load_json_file(plot_file, {})
+                for entry in data.get("plot_arc", []):
+                    if isinstance(entry, dict) and entry.get("chapter_num") == chapter_num:
+                        entry["user_override"] = override_text.strip()
+                        write_json_file(plot_file, data)
+                        print(f"✓ 第{chapter_num}章细纲修改已保存至 {plot_file.name}")
+                        return
+                raise ValueError(f"{plot_file.name} 中未找到第{chapter_num}章条目")
+        raise ValueError(f"未找到覆盖第 {volume_num} 卷第 {chapter_num} 章的 plot_arc 文件")
+
+    return _capture_action(_do, message="章节细纲修改已保存。")
 
 
 def _rebuild_story_memory_before_chapter(book_path: Path, volume_num: int, chapter_num: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:

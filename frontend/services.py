@@ -677,11 +677,11 @@ def _regenerate_chapter_markdown(book_path: Path, relative_path: str, prompt_pre
             ) or {"decision": "PASS", "score": 3}
             score = _coerce_int(last_review.get("score", 3), 3)
             char_count = sum(1 for c in raw_text if not c.isspace())
-            if is_review_passed(last_review) and char_count >= 3000:
+            if is_review_passed(last_review) and char_count >= 2800:
                 print(f"✓ 章节审核通过 (评分: {score}/5, 字数≈{char_count})")
                 break
-            if char_count < 3000 and attempt < 2:
-                wc_note = f"\n字数不足（当前约{char_count}字），请将正文扩充至3300-3800字。"
+            if char_count < 2800 and attempt < 2:
+                wc_note = f"\n字数不足（当前约{char_count}字），请将正文扩充至3000-3300字。"
                 rewrite_feedback = "\n".join(last_review.get("improvement_suggestions", [])) + wc_note
                 # skip the outer rewrite_feedback assignment next iteration
                 last_review = {}

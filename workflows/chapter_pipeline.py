@@ -994,9 +994,9 @@ def _run_audit_phase(
 
         # 字数底线：爽度审核通过后，字数仍不达标则补写重试
         char_count = sum(1 for c in raw_text if not c.isspace())
-        if char_count < 3000 and retry_count < max_retries - 1:
+        if char_count < 2800 and retry_count < max_retries - 1:
             print(f"✗ 字数不足（约{char_count}字），触发扩写重试...")
-            wc_fb = f"【字数不足】正文当前约{char_count}字，目标3300-3800字。请充分展开每个情节点，不要压缩场景、对话和心理描写。"
+            wc_fb = f"【字数不足】正文当前约{char_count}字，目标3000-3300字。请充分展开每个情节点，不要压缩场景、对话和心理描写。"
             raw_text, chapter_title = _run_draft(
                 loop, chapter_outline, plot_analysis, plot_data_for_draft,
                 story_history_for_draft, previous_chapter_ending,

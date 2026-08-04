@@ -26,6 +26,8 @@ from frontend.services import (
     save_artifact_chapter_outline,
     get_database_table,
     get_book_view,
+    get_chapter_translation,
+    translate_chapter,
     get_generation_state_history,
     get_llm_run_log_history,
     get_prompt_preset_detail,
@@ -130,7 +132,7 @@ def _render_novel_mode(output_dir: str, live_log_placeholder) -> None:
             live_log_placeholder,
         )
     with tabs[2]:
-        _render_chapter_reader(selected_book_path, book_view)
+        _render_chapter_reader(selected_book_path, book_view, live_log_placeholder)
     with tabs[3]:
         _render_artifact_editor(selected_book_path, book_view, live_log_placeholder)
     with tabs[4]:
@@ -593,7 +595,7 @@ def _render_overview(book_view: dict) -> None:
                 st.code(item, language="text")
 
 
-def _render_chapter_reader(book_path: str, book_view: dict) -> None:
+def _render_chapter_reader(book_path: str, book_view: dict, live_log_placeholder) -> None:
     chapter_options = book_view["chapter_options"]
     if not chapter_options:
         st.info("当前还没有章节。")
@@ -610,10 +612,21 @@ def _render_chapter_reader(book_path: str, book_view: dict) -> None:
     related_lore = matching_lore_for_chapter(book_path, selected_chapter)
     chapter_word_count = _chapter_character_count(chapter_content)
 
+    view_mode = st.radio(
+        "阅读语言",
+        options=["原文", "译文"],
+        horizontal=True,
+        key="chapter-reader-view-mode",
+        label_visibility="collapsed",
+    )
+
     left, right = st.columns([1.3, 1])
     with left:
-        st.markdown(f"#### 阅读视图 <span style='font-size:0.9rem;font-weight:400;color:#6b7280;'>（约 {chapter_word_count} 字）</span>", unsafe_allow_html=True)
-        st.markdown(chapter_content)
+        if view_mode == "译文":
+            _render_chapter_translation_view(book_path, selected_chapter, live_log_placeholder)
+        else:
+            st.markdown(f"#### 阅读视图 <span style='font-size:0.9rem;font-weight:400;color:#6b7280;'>（约 {chapter_word_count} 字）</span>", unsafe_allow_html=True)
+            st.markdown(chapter_content)
     with right:
         if related_lore:
             st.markdown("#### 对应档案")
@@ -643,6 +656,58 @@ def _render_chapter_reader(book_path: str, book_view: dict) -> None:
         _render_fragment_rewrite(book_path, selected_chapter)
 
 
+_TRANS_LANG_LABELS = {"zh": "中文", "en": "英文"}
+
+
+def _render_chapter_translation_view(book_path: str, selected_chapter: str, live_log_placeholder) -> None:
+    """译文视图：默认原文，切到此处时若无译文则自动翻译；提供刷新与过时提示。"""
+    st.markdown("#### 译文视图")
+    if not GEMINI_API_KEY:
+        st.warning("未检测到 GEMINI_API_KEY，无法翻译。")
+        return
+
+    refresh = st.button(
+        "🔄 刷新翻译",
+        key=f"trans-refresh-{selected_chapter}",
+        help="强制按最新原文重新翻译并覆盖译文",
+    )
+    log_area = st.empty()
+    state = get_chapter_translation(book_path, selected_chapter)
+
+    if refresh:
+        result = _run_live_action(
+            log_area, heading="正在刷新翻译...",
+            runner=lambda lc: translate_chapter(book_path, selected_chapter, force=True, log_callback=lc),
+        )
+        if not result.success:
+            st.error("翻译失败，请查看上方日志。")
+            return
+        state = get_chapter_translation(book_path, selected_chapter)
+    elif not state["exists"]:
+        result = _run_live_action(
+            log_area, heading="正在翻译章节...",
+            runner=lambda lc: translate_chapter(book_path, selected_chapter, log_callback=lc),
+        )
+        if not result.success:
+            st.error("翻译失败，请查看上方日志或点击「🔄 刷新翻译」重试。")
+            return
+        state = get_chapter_translation(book_path, selected_chapter)
+
+    if not state["exists"]:
+        st.info("暂无译文。")
+        return
+
+    if state["stale"]:
+        st.warning("⚠ 原文已变动，此译文可能过时。点「🔄 刷新翻译」按最新原文重新生成。")
+
+    src, tgt = state.get("source_lang", ""), state.get("target_lang", "")
+    caption = "译文"
+    if src and tgt:
+        caption += f"（{_TRANS_LANG_LABELS.get(src, src)} → {_TRANS_LANG_LABELS.get(tgt, tgt)}）"
+    if state.get("translated_at"):
+        caption += f" · {state['translated_at']}"
+    st.caption(caption)
+    st.markdown(state["body"])
 
 
 def _render_fragment_rewrite(book_path: str, selected_chapter: str) -> None:

@@ -67,6 +67,28 @@ def _build_world_rules_card(world_rules: dict) -> str:
     return "\n".join(lines)
 
 
+def _build_character_cards(character_cards) -> str:
+    """将 character_cards 格式化为 draft_smith 写作前比对用的人设卡速查。"""
+    if not isinstance(character_cards, list) or not character_cards:
+        return ""
+    lines = []
+    for c in character_cards:
+        if not isinstance(c, dict):
+            continue
+        name = c.get("name", "")
+        if not name:
+            continue
+        parts = [f"【{name}·{c.get('role','')}】人设：{c.get('persona_tag','')}"]
+        if c.get("speech_style"):
+            parts.append(f"说话方式：{c['speech_style']}")
+        if c.get("behavior_rule"):
+            parts.append(f"行为准则：{c['behavior_rule']}")
+        if c.get("forbidden_ooc"):
+            parts.append(f"崩人设禁区：{c['forbidden_ooc']}")
+        lines.append("；".join(parts))
+    return "\n".join(lines)
+
+
 def _apply_vocab_corrections(text: str, world_rules: dict | None = None) -> tuple[str, list[str]]:
     """生成后、审核前自动修正已知词汇违规，避免因称谓问题触发全章重写。返回 (修正后文本, 修正说明列表)。"""
     corrections: list[str] = []
@@ -121,6 +143,14 @@ def run_chapter_generation(loop, outline_override: str = "") -> Dict[str, Any]:
             import json as _json
             rules_card = _build_world_rules_card(world_rules)
             draft_story_context = f"【世界规则速查卡（强制遵守）】\n{rules_card}\n\n{draft_story_context}"
+        # 注入人设卡（防人设崩塌）：写对白/动作前强制比对角色的说话方式与行为红线
+        character_cards = (loop.world_setting or {}).get("character_cards") if loop.world_setting else None
+        cards_card = _build_character_cards(character_cards)
+        if cards_card:
+            draft_story_context = (
+                f"【人设卡（写每句对白/每个动作前先自检：他会这么说/这么做吗？违反即改）】\n{cards_card}\n\n"
+                f"{draft_story_context}"
+            )
         # 注入沉淀的人工写作意见（来自章节局部重写的反馈），让全文写作不再重犯同类问题
         guidelines_text = _load_writing_guidelines(loop.book_dir)
         if guidelines_text:

@@ -192,6 +192,81 @@ def gemini_client(system_prompt: str, user_prompt: str, response_schema: dict,te
       time.sleep(backoff)
   raise last_exc
 
+def gemini_translate(
+    system_prompt: str,
+    user_prompt: str,
+    model: str = "gemini-3.1-flash-lite",
+    temperature: float = 0.3,
+) -> str:
+  """纯文本翻译客户端：不带 response_schema，直接返回文本，不做 json.loads。
+
+  与 gemini_client 平行，专供章节翻译等纯文本场景使用；复用重试逻辑与 run log。
+  """
+  started_at = datetime.now().isoformat(timespec="seconds")
+  started_monotonic = time.monotonic()
+  config = types.GenerateContentConfig(
+        system_instruction=system_prompt,
+        temperature=temperature,
+        http_options=types.HttpOptions(timeout=_GEMINI_HTTP_TIMEOUT_MS),
+    )
+  last_exc = None
+  for attempt in range(1, _GEMINI_MAX_RETRIES + 1):
+    response_text = None
+    response_debug = None
+    try:
+      response = _get_client().models.generate_content(
+        model=model,
+        contents=user_prompt,
+        config=config
+      )
+      response_debug = _response_debug_meta(response)
+      response_text = getattr(response, "text", None) or _extract_candidate_text(response)
+      if not response_text or not response_text.strip():
+        raise ValueError(
+          "Gemini 翻译返回空文本"
+          f"（candidate_count={response_debug['candidate_count']},"
+          f" finish_reasons={response_debug['finish_reasons']},"
+          f" prompt_feedback={response_debug['prompt_feedback']}）"
+        )
+      write_llm_run_log(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        response_schema={},
+        model=model,
+        temperature=temperature,
+        started_at=started_at,
+        started_monotonic=started_monotonic,
+        response_text=response_text,
+        parsed_response=response_text,
+        response_debug=response_debug,
+      )
+      return response_text
+    except Exception as exc:
+      last_exc = exc
+      write_llm_run_log(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        response_schema={},
+        model=model,
+        temperature=temperature,
+        started_at=started_at,
+        started_monotonic=started_monotonic,
+        response_text=response_text,
+        parsed_response=None,
+        response_debug=response_debug,
+        error=exc,
+      )
+      if attempt >= _GEMINI_MAX_RETRIES or not _is_retryable_llm_error(exc):
+        raise
+      backoff = _GEMINI_RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
+      print(
+        f"⚠ Gemini 翻译请求失败（尝试 {attempt}/{_GEMINI_MAX_RETRIES}）：{exc}；"
+        f" {backoff:.0f} 秒后重试..."
+      )
+      time.sleep(backoff)
+  raise last_exc
+
+
 def load_prompt_config(template_name: str,type: str, **kwargs) -> str:
   template_config = load_prompt_template(template_name)
   if "schema" not in type:

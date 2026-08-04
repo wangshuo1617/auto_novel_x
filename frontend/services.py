@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import shutil
@@ -44,7 +45,7 @@ from utils.prompt_presets import (
     save_prompt_template,
     use_prompt_preset,
 )
-from utils.llm_client import gemini_client, load_prompt_config
+from utils.llm_client import gemini_client, gemini_translate, load_prompt_config
 from utils.story_context import build_volume_progress, empty_story_memory, merge_lore_into_story_memory, story_context_for_draft, story_context_for_plot
 from workflows.phase_initialization import _business_markdown
 from workflows.review_utils import is_review_passed, run_reader_review
@@ -1679,6 +1680,146 @@ def rewrite_chapter_fragment(
         return {"replaced": True, "chapter": relative_path}
 
     return _capture_action(_do, message="局部重写完成。", log_callback=log_callback)
+
+
+# ─── 章节翻译服务 ───────────────────────────────────────────────────────────
+# 译文以旁挂文件形式存于 <book>/translations/ 子目录，文件名沿用原章节名。
+# 原文文件永不被翻译逻辑改动。译文头部内嵌元数据（原文指纹 + 方向），
+# 切到译文时比对当前原文指纹判断是否过时。详见 docs/adr/0001-translation-sidecar.md。
+
+_TRANSLATION_DIR = "translations"
+_TRANSLATION_MODEL = "gemini-3.1-flash-lite"
+_TRANSLATION_META_START = "<!--translation"
+_TRANSLATION_META_END = "-->"
+
+
+def _translation_sidecar_path(book_dir: str | Path, relative_path: str) -> Path:
+    """把章节相对路径映射到 translations/ 子目录下的同名译文文件。"""
+    book_path = Path(book_dir)
+    chapter_path = resolve_relative_path(book_path, relative_path)
+    return book_path / _TRANSLATION_DIR / chapter_path.name
+
+
+def _source_fingerprint(source_text: str) -> str:
+    """对原文正文取 sha256 指纹，用于译文过时检测。只对正文内容取值。"""
+    return hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+
+
+def _detect_translation_direction(source_text: str) -> tuple[str, str]:
+    """按 CJK / 拉丁字母占比自动检测源语言，返回 (源语言, 目标语言)。"""
+    cjk = sum(1 for ch in source_text if "一" <= ch <= "鿿")
+    latin = sum(1 for ch in source_text if ("a" <= ch.lower() <= "z"))
+    if cjk >= latin:
+        return ("zh", "en")
+    return ("en", "zh")
+
+
+_LANG_LABELS = {"zh": "中文", "en": "英文"}
+
+
+def _serialize_sidecar(meta: dict[str, str], body: str) -> str:
+    lines = [_TRANSLATION_META_START]
+    for key, value in meta.items():
+        lines.append(f"{key}: {value}")
+    lines.append(_TRANSLATION_META_END)
+    return "\n".join(lines) + "\n\n" + body.strip() + "\n"
+
+
+def _parse_sidecar(text: str) -> tuple[dict[str, str], str]:
+    """解析译文文件，返回 (元数据, 译文正文)。无头部时元数据为空。"""
+    if not text.startswith(_TRANSLATION_META_START):
+        return {}, text.strip()
+    end_idx = text.find(_TRANSLATION_META_END)
+    if end_idx == -1:
+        return {}, text.strip()
+    header = text[len(_TRANSLATION_META_START):end_idx]
+    body = text[end_idx + len(_TRANSLATION_META_END):]
+    meta: dict[str, str] = {}
+    for line in header.splitlines():
+        if ":" in line:
+            key, _, value = line.partition(":")
+            meta[key.strip()] = value.strip()
+    return meta, body.strip()
+
+
+def get_chapter_translation(book_dir: str | Path, relative_path: str) -> dict[str, Any]:
+    """读取某章节的已存译文及其状态，供阅读页切换时判断显示/过时/需生成。
+
+    返回: {exists, body, stale, source_lang, target_lang, translated_at}
+    """
+    sidecar = _translation_sidecar_path(book_dir, relative_path)
+    if not sidecar.exists():
+        return {"exists": False, "body": "", "stale": False}
+
+    meta, body = _parse_sidecar(sidecar.read_text(encoding="utf-8"))
+    source_text = read_artifact_text(book_dir, relative_path)
+    current_fingerprint = _source_fingerprint(source_text)
+    stale = meta.get("source_hash", "") != current_fingerprint
+    return {
+        "exists": True,
+        "body": body,
+        "stale": stale,
+        "source_lang": meta.get("source_lang", ""),
+        "target_lang": meta.get("target_lang", ""),
+        "translated_at": meta.get("translated_at", ""),
+    }
+
+
+def translate_chapter(
+    book_dir: str | Path,
+    relative_path: str,
+    force: bool = False,
+    log_callback: Callable[[str], None] | None = None,
+) -> ActionResult:
+    """翻译章节正文并持久化为旁挂文件。已有且未过时时直接复用，force=True 强制重译。"""
+    book_path = Path(book_dir)
+
+    def _do():
+        sidecar = _translation_sidecar_path(book_path, relative_path)
+        source_text = read_artifact_text(book_path, relative_path)
+        current_fingerprint = _source_fingerprint(source_text)
+
+        if not force and sidecar.exists():
+            meta, body = _parse_sidecar(sidecar.read_text(encoding="utf-8"))
+            if meta.get("source_hash", "") == current_fingerprint and body:
+                print("✓ 译文已是最新，直接复用。")
+                return {"relative_path": relative_path, "reused": True}
+
+        source_lang, target_lang = _detect_translation_direction(source_text)
+        source_label = _LANG_LABELS[source_lang]
+        target_label = _LANG_LABELS[target_lang]
+        print(f"[翻译] {source_label} → {target_label}，模型 {_TRANSLATION_MODEL}")
+
+        system_prompt = (
+            f"你是一名专业的小说翻译。请把用户提供的{source_label}小说章节忠实翻译为{target_label}。"
+            "要求：\n"
+            "1. 完整翻译全部内容，不得省略、概括或添加。\n"
+            "2. 保留原有的 Markdown 结构（章节标题的 # 号、分段、空行）。\n"
+            "3. 保持原文的叙事语气与文学性，人名、地名等专有名词翻译后保持全篇一致。\n"
+            "4. 只输出译文本身，不要加任何说明、注释或前后缀。"
+        )
+        user_prompt = source_text
+
+        from utils.llm_logging import use_llm_log_context
+        with use_llm_log_context(book_path, "chapter_translation"):
+            translated = gemini_translate(system_prompt, user_prompt, model=_TRANSLATION_MODEL)
+
+        translated = translated.strip()
+        if not translated:
+            raise ValueError("翻译结果为空。")
+
+        meta = {
+            "source_hash": current_fingerprint,
+            "source_lang": source_lang,
+            "target_lang": target_lang,
+            "model": _TRANSLATION_MODEL,
+            "translated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        write_text_file(sidecar, _serialize_sidecar(meta, translated))
+        print(f"✓ 译文已保存: {_TRANSLATION_DIR}/{sidecar.name}")
+        return {"relative_path": relative_path, "reused": False}
+
+    return _capture_action(_do, message="章节翻译完成。", log_callback=log_callback)
 
 
 # ─── 短故事服务 ─────────────────────────────────────────────────────────────

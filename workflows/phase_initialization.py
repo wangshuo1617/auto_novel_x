@@ -6,7 +6,7 @@
 import json
 
 from agents import ArcDirector, ElementDesigner, WorldArchitect
-from utils.book_artifacts import infer_main_story_goal_from_world_setting
+from utils.book_artifacts import infer_main_story_goal_from_world_setting, resolve_book_genre
 from workflows.review_utils import is_review_passed, run_reader_review
 
 
@@ -39,6 +39,7 @@ def _run_world_architect(loop) -> None:
         world_result = world_architect.run()
         review_data = run_reader_review(
             review_stage="world_setting",
+            genre=resolve_book_genre(world_result),
             content_to_review=world_result,
             context_payload={
                 "trend_analysis": loop.trend_analysis,
@@ -118,6 +119,7 @@ def _run_element_designer(loop) -> None:
         element_data = element_result
         review_data = run_reader_review(
             review_stage="element_design",
+            genre=resolve_book_genre(loop.world_setting),
             content_to_review=element_data,
             context_payload={
                 "world_setting": loop.get_novel_setting(),
@@ -156,6 +158,7 @@ def _run_arc_director_first_volume(loop) -> None:
         loop.volume_plan = volume_result
         review_data = run_reader_review(
             review_stage="volume_plan",
+            genre=resolve_book_genre(loop.world_setting),
             content_to_review=loop.volume_plan,
             context_payload={
                 "world_setting": loop.get_novel_setting(),

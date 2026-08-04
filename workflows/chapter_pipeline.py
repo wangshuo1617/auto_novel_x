@@ -15,6 +15,7 @@ from utils.book_artifacts import (
     lore_artifact_path,
     parse_plot_range_identity,
     plot_arc_artifact_path,
+    resolve_book_genre,
     write_json_file,
 )
 from utils.generation_state import GenerationStateTracker
@@ -273,8 +274,8 @@ def _extract_chapter_hook(text: str) -> str:
     import re
     # 去掉章节标题行
     text = re.sub(r"^#.*\n", "", text).strip()
-    # 按句末标点拆分，找最后一个有意义的句子
-    sentences = re.split(r'(?<=[^\w\s])', text)
+    # 按中文句末标点（含引号、书名号收尾）拆分，找最后一个有意义的句子
+    sentences = re.split(r"(?<=[。！？…”」』])", text)
     for sent in reversed(sentences):
         sent = sent.strip()
         if len(sent) >= 8:
@@ -406,6 +407,7 @@ def _supplement_specific_assets(
 
         review_data = run_reader_review(
             review_stage="element_design",
+            genre=resolve_book_genre(loop.world_setting),
             content_to_review=addon_raw,
             context_payload={
                 "world_setting": loop.get_novel_setting(),
@@ -816,8 +818,49 @@ def _plot_arc_bounds(plot_data: dict, default_start_chapter_num: int) -> tuple[i
     return default_start_chapter_num, end_chapter_num
 
 
+def _collect_existing_user_overrides(book_dir, volume_num: int) -> dict[int, str]:
+    """扫描本卷已有的 plot_arc 文件，收集 chapter_num → user_override 映射。
+    用于 plot_arc 重生成/覆盖前保留作者已审定的细纲，避免静默丢失。"""
+    overrides: dict[int, str] = {}
+    for plot_file in list_plot_files(book_dir):
+        identity = parse_plot_range_identity(plot_file)
+        if not identity or identity[0] != volume_num:
+            continue
+        data = load_json_file(plot_file, {})
+        if not isinstance(data, dict):
+            continue
+        for entry in data.get("plot_arc", []) or []:
+            if not isinstance(entry, dict):
+                continue
+            ch = entry.get("chapter_num")
+            ov = str(entry.get("user_override", "")).strip()
+            if isinstance(ch, int) and ov:
+                overrides[ch] = ov
+    return overrides
+
+
+def _reapply_user_overrides(plot_arc: list, overrides: dict[int, str]) -> int:
+    """把收集到的 user_override 按 chapter_num 回填到新的 plot_arc 条目。返回回填条数。"""
+    if not overrides:
+        return 0
+    count = 0
+    for entry in plot_arc or []:
+        if not isinstance(entry, dict):
+            continue
+        ch = entry.get("chapter_num")
+        if isinstance(ch, int) and ch in overrides and not str(entry.get("user_override", "")).strip():
+            entry["user_override"] = overrides[ch]
+            count += 1
+    return count
+
+
 def _save_plot_arc_files(loop, plot_data: dict) -> str:
     plot_data["volume_num"] = loop.current_volume_num
+    # 覆盖写盘前保留作者已审定的细纲（user_override），防止重生成 plot_arc 时静默丢失
+    overrides = _collect_existing_user_overrides(loop.book_dir, loop.current_volume_num)
+    reapplied = _reapply_user_overrides(plot_data.get("plot_arc", []), overrides)
+    if reapplied:
+        print(f"✓ 已保留 {reapplied} 条作者审定细纲(user_override)")
     start_chapter_num, end_chapter_num = _plot_arc_bounds(plot_data, loop.current_chapter_num)
     range_file = plot_arc_artifact_path(loop.book_dir, loop.current_volume_num, start_chapter_num, end_chapter_num)
     write_json_file(range_file, plot_data)
@@ -859,6 +902,7 @@ def _ensure_plot_arc(loop, full_story_history: str) -> Tuple[dict, str, dict]:
 
             review_data = run_reader_review(
                 review_stage="plot_arc",
+                genre=resolve_book_genre(loop.world_setting),
                 content_to_review=plot_data,
                 context_payload={
                     "world_setting": loop.get_novel_setting(),
@@ -982,6 +1026,7 @@ def _run_audit_phase(
             tracker.phase("reader_review", "running", {"attempt": retry_count + 1})
         review_data = run_reader_review(
             review_stage="chapter_draft",
+            genre=resolve_book_genre(loop.world_setting),
             content_to_review=raw_text,
             context_payload={
                 "chapter_outline": chapter_outline,

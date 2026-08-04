@@ -28,6 +28,7 @@ from utils.book_artifacts import (
     parse_plot_range_identity,
     parse_volume_plan_number,
     plot_arc_artifact_path,
+    resolve_book_genre,
     resolve_relative_path,
     write_json_file,
     write_text_file,
@@ -551,6 +552,19 @@ def _regenerate_plot_arc(book_path: Path, relative_path: str, prompt_preset_id: 
         if isinstance(entry, dict):
             entry["chapter_num"] = start_chapter + i
 
+    # 覆盖写盘前保留旧文件里作者已审定的细纲（user_override），防止重生成时静默丢失
+    old_plot = load_json_file(plot_file, {})
+    old_overrides = {
+        entry.get("chapter_num"): str(entry.get("user_override", "")).strip()
+        for entry in (old_plot.get("plot_arc", []) if isinstance(old_plot, dict) else [])
+        if isinstance(entry, dict) and isinstance(entry.get("chapter_num"), int)
+        and str(entry.get("user_override", "")).strip()
+    }
+    from workflows.chapter_pipeline import _reapply_user_overrides
+    reapplied = _reapply_user_overrides(plot_arc, old_overrides)
+    if reapplied:
+        print(f"✓ 已保留 {reapplied} 条作者审定细纲(user_override)")
+
     plot_result["volume_num"] = volume_num
     plot_result["volume_progress"] = volume_progress
     write_json_file(plot_file, plot_result)
@@ -590,7 +604,8 @@ def _regenerate_world_setting(book_path: Path, prompt_preset_id: str) -> dict[st
 严格按照当前 schema 输出完整 JSON，不要附加解释。
 """.strip()
 
-    result = gemini_client(system_prompt, user_prompt, response_schema)
+    with use_prompt_preset(prompt_preset_id):
+        result = gemini_client(system_prompt, user_prompt, response_schema)
     if not isinstance(result, dict):
         raise ValueError("重生成的 world_setting 必须是 JSON 对象")
 
@@ -598,6 +613,60 @@ def _regenerate_world_setting(book_path: Path, prompt_preset_id: str) -> dict[st
     novel_setting = result.get("novel_setting", {})
     write_text_file(book_path / "world_setting.md", _business_markdown(result.get("business_analysis", {}), novel_setting))
     return {"artifact": "world_setting.json", "book_title": detect_book_title(book_path)}
+
+
+def _resync_last_chapter_artifacts(
+    book_path: Path,
+    volume_num: int,
+    chapter_num: int,
+    chapter_title: str,
+    raw_text: str,
+    chapter_outline: dict[str, Any],
+    novel_setting: dict[str, Any],
+    prompt_preset_id: str,
+) -> bool:
+    """重生成「全书最后一章」后，与完整管线一致地回写 lore / story_memory / 数据库。
+    仅用于最后一章：中间章回写会让后续章节的档案/记忆/数据库全部错位（用户已确认）。
+    复用主管线 chapter_pipeline._run_writeback（LoreArchivist + lore 文件 + story_memory）
+    与 ContinuityKeeper 的 database_updates。返回是否成功回写。"""
+    from workflows.chapter_pipeline import _run_writeback
+    from agents import ContinuityKeeper
+    from utils.llm_logging import use_llm_log_context
+
+    # 构造临时 loop 并对齐到被重生成的这一章（load_existing_book 会把指针停在"下一待写章"，需回退）
+    loop = MainLoop(
+        book_dir_path=str(book_path),
+        prompt_preset_id=prompt_preset_id,
+    )
+    story_memory, prior_lore_records = _rebuild_story_memory_before_chapter(book_path, volume_num, chapter_num)
+    loop.story_memory = story_memory
+    loop.lore_records = list(prior_lore_records)
+    loop.current_volume_num = volume_num
+    loop.current_chapter_num = chapter_num
+    loop.current_global_chapter_num = len(prior_lore_records) + 1
+
+    with use_prompt_preset(prompt_preset_id), use_llm_log_context(book_path, f"resync_v{volume_num}_c{chapter_num}"):
+        # 1) 数据库：连贯性守门员产出 database_updates 后应用（与主管线 _run_audit_phase 同源）
+        world_rules = (loop.world_setting or {}).get("novel_setting", {}).get("world_rules") if loop.world_setting else None
+        continuity_result = ContinuityKeeper(
+            db_state=loop.db.get_state(),
+            chapter_outline=json.dumps(chapter_outline, ensure_ascii=False),
+            generated_text=raw_text,
+            world_rules=world_rules,
+        ).run()
+        if isinstance(continuity_result, dict):
+            database_updates = continuity_result.get("database_updates") or {}
+            if database_updates:
+                try:
+                    loop.db.update(database_updates)
+                    print("✓ 已更新数据库状态")
+                except Exception as e:
+                    print(f"⚠ 数据库更新失败，跳过（正文与 lore 仍会回写）：{e}")
+
+        # 2) lore 文件 + story_memory + 悬念：复用主管线回写逻辑（会覆盖本章旧 lore）
+        _run_writeback(loop, chapter_title, raw_text, chapter_outline)
+    print("✓ 已同步 lore / story_memory / 数据库")
+    return True
 
 
 def _rebuild_world_setting_markdown(book_path: Path) -> dict[str, Any]:
@@ -665,6 +734,7 @@ def _regenerate_chapter_markdown(book_path: Path, relative_path: str, prompt_pre
             )
             last_review = run_reader_review(
                 review_stage="chapter_draft",
+                genre=resolve_book_genre(world_setting),
                 content_to_review=raw_text,
                 context_payload={
                     "chapter_outline": chapter_outline,
@@ -705,12 +775,27 @@ def _regenerate_chapter_markdown(book_path: Path, relative_path: str, prompt_pre
 
     write_text_file(chapter_path, f"# {chapter_title}\n\n{raw_text}")
     print(f"✓ 章节已重生成: {chapter_path.name}")
+
+    # 若重生成的是全书最后一章，则与完整管线一致地回写 lore/story_memory/数据库；
+    # 中间章仅改 md（回写会让后续章节全部错位，已确认）。
+    resynced = False
+    if not later_chapters:
+        try:
+            resynced = _resync_last_chapter_artifacts(
+                book_path, volume_num, chapter_num, chapter_title, raw_text,
+                chapter_outline, novel_setting, prompt_preset_id,
+            )
+        except Exception as e:
+            print(f"⚠ 最后一章回写 lore/记忆/数据库失败，正文已保存但状态未同步：{e}")
+            resynced = False
+
     return {
         "artifact": relative_path,
         "title": chapter_title,
         "volume_num": volume_num,
         "chapter_num": chapter_num,
-        "scope": "chapter_markdown_only",
+        "scope": "chapter_full_resync" if resynced else "chapter_markdown_only",
+        "resynced": resynced,
     }
 
 
@@ -820,15 +905,8 @@ def _rebuild_story_memory_before_chapter(book_path: Path, volume_num: int, chapt
     return story_memory, lore_records
 
 
-def _extract_chapter_hook(text: str) -> str:
-    import re
-    text = re.sub(r"^#.*\n", "", text).strip()
-    sentences = re.split(r"(?<=[。！？…\u201d\u300d\u300f])", text)
-    for sent in reversed(sentences):
-        sent = sent.strip()
-        if len(sent) >= 8:
-            return f"[前章钩子: \"{sent[-80:]}\"]"
-    return f"[前章钩子: \"{text[-60:]}\"]"
+# 前章钩子提取与主管线共用同一实现，保证正常生成与重生成拿到一致的「前章钩子」。
+from workflows.chapter_pipeline import _extract_chapter_hook
 
 
 def _load_previous_chapter_ending(book_path: Path, volume_num: int, chapter_num: int, max_chars: int = 600) -> str:
@@ -1631,41 +1709,42 @@ def rewrite_chapter_fragment(
 
         with use_prompt_preset(preset):
             system_p = load_prompt_config("draft_smith_prompt", "system")
-        user_p = (
-            f"以下是当前章节的完整正文（供参考文风和前后文）：\n\n{full_text}\n\n"
-            f"---\n"
-            f"需要重写的片段：\n\n{original_fragment}\n\n"
-            f"---\n"
-            f"修改意见：{instruction}\n\n"
-            f"请仅输出重写后的片段文字，不要包含任何说明或章节标题。"
-            f"重写内容必须能无缝替换回原文对应位置，前后衔接自然。"
-        )
-        schema = {"type": "object", "properties": {"rewritten": {"type": "string"}}, "required": ["rewritten"]}
+            user_p = (
+                f"以下是当前章节的完整正文（供参考文风和前后文）：\n\n{full_text}\n\n"
+                f"---\n"
+                f"需要重写的片段：\n\n{original_fragment}\n\n"
+                f"---\n"
+                f"修改意见：{instruction}\n\n"
+                f"请仅输出重写后的片段文字，不要包含任何说明或章节标题。"
+                f"重写内容必须能无缝替换回原文对应位置，前后衔接自然。"
+            )
+            schema = {"type": "object", "properties": {"rewritten": {"type": "string"}}, "required": ["rewritten"]}
 
-        max_attempts = 3
-        replacement = ""
-        for attempt in range(max_attempts):
-            print(f"\n[E] 局部重写中...（尝试 {attempt+1}/{max_attempts}）")
-            result = gemini_client(system_p, user_p, schema)
-            replacement = result.get("rewritten", "").strip()
-            if not replacement:
-                continue
+            max_attempts = 3
+            replacement = ""
+            for attempt in range(max_attempts):
+                print(f"\n[E] 局部重写中...（尝试 {attempt+1}/{max_attempts}）")
+                result = gemini_client(system_p, user_p, schema)
+                replacement = result.get("rewritten", "").strip()
+                if not replacement:
+                    continue
 
-            print("\n[I] 毒舌书评人正在审核局部重写...")
-            review = run_reader_review(
-                review_stage="chapter_draft",
-                content_to_review=replacement,
-                context_payload={"story_context": full_text, "instruction": instruction},
-                evaluation_focus="检查局部重写片段是否解决了修改意见，且与上下文衔接自然、风格一致。",
-            ) or {"decision": "PASS", "score": 3}
-            if is_review_passed(review):
-                print(f"✓ 审核通过 (评分: {review.get('score')}/5)")
-                break
-            print(f"⚠ 审核未通过：{review.get('review_summary','')[:80]}")
-            feedback = "\n".join(review.get("improvement_suggestions", []))
-            user_p = user_p + f"\n\n上次生成未通过审核，反馈：{feedback}\n请根据反馈重新生成。"
-        else:
-            print("⚠ 已达最大重试次数，使用最后一次结果")
+                print("\n[I] 毒舌书评人正在审核局部重写...")
+                review = run_reader_review(
+                    review_stage="chapter_draft",
+                    genre=resolve_book_genre(world_setting),
+                    content_to_review=replacement,
+                    context_payload={"story_context": full_text, "instruction": instruction},
+                    evaluation_focus="检查局部重写片段是否解决了修改意见，且与上下文衔接自然、风格一致。",
+                ) or {"decision": "PASS", "score": 3}
+                if is_review_passed(review):
+                    print(f"✓ 审核通过 (评分: {review.get('score')}/5)")
+                    break
+                print(f"⚠ 审核未通过：{review.get('review_summary','')[:80]}")
+                feedback = "\n".join(review.get("improvement_suggestions", []))
+                user_p = user_p + f"\n\n上次生成未通过审核，反馈：{feedback}\n请根据反馈重新生成。"
+            else:
+                print("⚠ 已达最大重试次数，使用最后一次结果")
 
         if not replacement:
             raise ValueError("重写片段为空，请检查输入。")

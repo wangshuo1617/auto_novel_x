@@ -164,6 +164,17 @@ def infer_main_story_goal_from_world_setting(world_setting: dict[str, Any] | Non
     return protagonist_role.rstrip("。")
 
 
+def resolve_book_genre(world_setting: dict[str, Any] | None) -> str:
+    """从 world_setting 读取书籍题材（供审稿人评估口味），缺失时中性兜底为「网文」。
+    避免把所有书按写死的「玄幻/系统流」审稿，尤其是女频等其它赛道。"""
+    if isinstance(world_setting, dict):
+        business = world_setting.get("business_analysis", {}) or {}
+        genre = str(business.get("selected_genre", "")).strip()
+        if genre:
+            return genre
+    return "网文"
+
+
 def chapter_display_name(path: str | Path) -> str:
     identity = parse_chapter_identity(path)
     if not identity:

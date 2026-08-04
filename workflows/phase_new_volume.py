@@ -10,6 +10,7 @@ from utils.book_artifacts import (
     load_json_file,
     parse_plot_range_identity,
     plot_arc_artifact_path,
+    resolve_book_genre,
     write_json_file,
 )
 from workflows.review_utils import is_review_passed, run_reader_review
@@ -81,6 +82,7 @@ def run_new_volume(loop) -> None:
         loop.volume_plan = volume_result
         review_data = run_reader_review(
             review_stage="volume_plan",
+            genre=resolve_book_genre(loop.world_setting),
             content_to_review=loop.volume_plan,
             context_payload={
                 "world_setting": loop.get_novel_setting(),
@@ -134,6 +136,7 @@ def _run_volume_asset_addon(loop) -> None:
         )
         review_data = run_reader_review(
             review_stage="element_design",
+            genre=resolve_book_genre(loop.world_setting),
             content_to_review=addon_raw,
             context_payload={
                 "world_setting": loop.get_novel_setting(),

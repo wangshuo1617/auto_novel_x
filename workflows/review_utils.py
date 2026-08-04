@@ -10,7 +10,7 @@ def run_reader_review(
     *,
     review_stage: str,
     content_to_review: Any,
-    genre: str = "玄幻/系统流",
+    genre: str = "网文",
     context_payload: dict[str, Any] | None = None,
     evaluation_focus: str = "",
 ) -> dict[str, Any]:

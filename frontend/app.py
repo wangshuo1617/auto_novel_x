@@ -653,7 +653,7 @@ def _render_chapter_reader(book_path: str, book_view: dict, live_log_placeholder
                 st.code(lore_content, language="json")
         with st.expander("原始 Markdown（复制用）", expanded=False):
             st.code(chapter_content, language="markdown")
-        _render_fragment_rewrite(book_path, selected_chapter)
+        _render_fragment_rewrite(book_path, selected_chapter, str(book_view.get("summary", {}).get("prompt_preset_id", "default")))
 
 
 _TRANS_LANG_LABELS = {"zh": "中文", "en": "英文"}
@@ -710,7 +710,7 @@ def _render_chapter_translation_view(book_path: str, selected_chapter: str, live
     st.markdown(state["body"])
 
 
-def _render_fragment_rewrite(book_path: str, selected_chapter: str) -> None:
+def _render_fragment_rewrite(book_path: str, selected_chapter: str, prompt_preset_id: str) -> None:
     with st.expander("✏️ 局部重写（选中片段 + 修改意见）", expanded=False):
         st.caption("从正文中复制不满意的段落，粘贴到下方，填写修改意见后点击局部重写。")
         fragment = st.text_area("需要修改的片段（从正文完整复制）", height=160, key=f"frag-{selected_chapter}")
@@ -725,7 +725,7 @@ def _render_fragment_rewrite(book_path: str, selected_chapter: str) -> None:
                         log_area, heading="局部重写中...",
                         runner=lambda lc: rewrite_chapter_fragment(
                             book_path, selected_chapter, fragment, instruction,
-                            prompt_preset_id=st.session_state.get(f"book-preset-{hash(book_path)}", ""),
+                            prompt_preset_id=prompt_preset_id,
                             log_callback=lc,
                         ),
                     )
@@ -856,7 +856,8 @@ def _render_artifact_editor(book_path: str, book_view: dict, live_log_placeholde
         if not can_regen:
             st.caption("仅支持重生成 world_setting.json / .md 和章节正文。")
         elif is_chapter_artifact(selected_artifact):
-            st.caption("重生成会优先按上方保存的细纲创作。如需改细纲，先在上方「章节细纲」编辑并保存。")
+            st.caption("重生成会优先按上方保存的细纲创作。如需改细纲，先在上方「章节细纲」编辑并保存。"
+                       "仅当重生成的是全书最后一章时，才会同步更新 lore/记忆/数据库；中间章仅重写正文。")
         # 就近渲染实时日志：章节/总纲重生成是长任务，日志必须显示在按钮下方。
         # 全局 live_log_placeholder 在所有 tab 之上，在本 tab 内点击时用户看不到它刷新，
         # 会误以为"没执行"。这里用本地占位符让进度就近可见。
